@@ -19,6 +19,15 @@ var startMonth =    8;
 var endYear    = 2021;
 var endMonth   =   12;
 
+// Optional year-based splitting to reduce memory pressure on long ranges.
+// false = process the full selected range in a single run (legacy behavior).
+// true  = split [startYear..endYear] into batches of N years.
+var ENABLE_YEAR_BATCHING = false;
+
+// Number of years per batch when ENABLE_YEAR_BATCHING = true.
+// Minimum effective value is 1 (one task per year).
+var yearsPerBatch = 2;
+
 // Probability thresholds for Dynamic World
 var water_thr      = 0.5; // Currently not used directly inside processWaterMask()
 var floodedveg_thr = 0.3;
@@ -72,6 +81,26 @@ function makeMonthList(sY, sM, eY, eM) {
   return list;
 }
 
+function makeYearBatches(sY, sM, eY, eM, yearsStep) {
+  yearsStep = Math.max(1, Math.floor(yearsStep));
+
+  var batches = [];
+  var currentStartYear = sY;
+
+  while (currentStartYear <= eY) {
+    var currentEndYear = Math.min(currentStartYear + yearsStep - 1, eY);
+    batches.push({
+      startYear: currentStartYear,
+      startMonth: currentStartYear === sY ? sM : 1,
+      endYear: currentEndYear,
+      endMonth: currentEndYear === eY ? eM : 12
+    });
+    currentStartYear = currentEndYear + 1;
+  }
+
+  return batches;
+}
+
 function monthKey(y, m) {
   return y + '-' + (m < 10 ? '0' + m : m.toString());
 }
@@ -86,7 +115,6 @@ function monthEndString(y, m) {
   return endDate.format('YYYY-MM-dd');
 }
 
-var monthList = makeMonthList(startYear, startMonth, endYear, endMonth);
 var aoiAreaKm2 = ee.Number(aoi.area(1)).divide(1e6);
 
 // ********************
@@ -674,8 +702,23 @@ function processMonth(y, m, hasS1) {
 // ********************
 // RUN
 // ********************
-var globalStartDate = ee.Date.fromYMD(startYear, startMonth, 1);
-var globalEndDate   = ee.Date.fromYMD(endYear, endMonth, 1).advance(1, 'month');
+var effectiveYearsPerBatch = Math.max(1, Math.floor(yearsPerBatch));
+
+if (ENABLE_YEAR_BATCHING && effectiveYearsPerBatch !== yearsPerBatch) {
+  print(
+    'yearsPerBatch was adjusted to ' + effectiveYearsPerBatch +
+    ' (minimum allowed value is 1).'
+  );
+}
+
+var batchList = ENABLE_YEAR_BATCHING
+  ? makeYearBatches(startYear, startMonth, endYear, endMonth, effectiveYearsPerBatch)
+  : [{
+      startYear: startYear,
+      startMonth: startMonth,
+      endYear: endYear,
+      endMonth: endMonth
+    }];
 
 var dwBase = ee.ImageCollection('GOOGLE/DYNAMICWORLD/V1')
   .filterBounds(aoi);
@@ -685,72 +728,99 @@ var s1Base = ee.ImageCollection('COPERNICUS/S1_GRD')
   .filter(ee.Filter.eq('instrumentMode', 'IW'))
   .filter(ee.Filter.listContains('transmitterReceiverPolarisation', band));
 
-buildMonthlyCountMap(dwBase, globalStartDate, globalEndDate, function(dwCountMap) {
-  buildMonthlyCountMap(s1Base, globalStartDate, globalEndDate, function(s1CountMap) {
+function runBatch(batchIndex) {
+  if (batchIndex >= batchList.length) {
+    print('All batches have been queued.');
+    return;
+  }
 
-    if (RUN_THRESHOLD_QA_ONLY) {
-      var features = monthList.map(function(d) {
-        var key = monthKey(d.year, d.month);
-        var dwCount = dwCountMap[key] || 0;
-        var s1Count = s1CountMap[key] || 0;
-        return buildQaFeature(d.year, d.month, dwCount, s1Count);
-      });
+  var batch = batchList[batchIndex];
+  var monthList = makeMonthList(
+    batch.startYear, batch.startMonth,
+    batch.endYear, batch.endMonth
+  );
 
-      var qaCollection = ee.FeatureCollection(features);
+  var batchStartDate = ee.Date.fromYMD(batch.startYear, batch.startMonth, 1);
+  var batchEndDate = ee.Date.fromYMD(batch.endYear, batch.endMonth, 1).advance(1, 'month');
 
-      print('QA collection preview', qaCollection.limit(5));
+  var batchLabel = batch.startYear + '_' + batch.startMonth +
+    '__' + batch.endYear + '_' + batch.endMonth;
 
-      Export.table.toDrive({
-        collection: qaCollection,
-        description: QA_EXPORT_DESCRIPTION,
-        folder: QA_EXPORT_FOLDER,
-        fileNamePrefix: QA_FILE_PREFIX,
-        fileFormat: 'CSV',
-        selectors: [
-          'year', 'month', 'month_key', 'start_date', 'end_date',
-          'status_code',
-          'dw_available', 's1_available',
-          'dw_image_count', 's1_image_count',
-          'aoi_area_km2',
+  print(
+    'Running batch ' + (batchIndex + 1) + '/' + batchList.length + ':',
+    batch.startYear + '-' + batch.startMonth + ' to ' + batch.endYear + '-' + batch.endMonth
+  );
 
-          'threshold_original', 'threshold_safe',
-          'threshold_diff', 'threshold_abs_diff', 'threshold_same',
+  buildMonthlyCountMap(dwBase, batchStartDate, batchEndDate, function(dwCountMap) {
+    buildMonthlyCountMap(s1Base, batchStartDate, batchEndDate, function(s1CountMap) {
 
-          'dw_has_gaps',
-          'dw_valid_area_km2', 'dw_nodata_area_km2', 'dw_water_area_raw_km2',
+      if (RUN_THRESHOLD_QA_ONLY) {
+        var features = monthList.map(function(d) {
+          var key = monthKey(d.year, d.month);
+          var dwCount = dwCountMap[key] || 0;
+          var s1Count = s1CountMap[key] || 0;
+          return buildQaFeature(d.year, d.month, dwCount, s1Count);
+        });
 
-          's1_valid_area_km2', 's1_valid_gap_area_km2',
-          's1_uncovered_gap_area_km2', 'unfilled_dw_gap_area_km2',
+        var qaCollection = ee.FeatureCollection(features);
 
-          'final_water_area_orig_km2',
-          'final_dw_component_area_orig_km2',
-          'final_s1_component_area_orig_km2',
+        print('QA collection preview (batch ' + batchLabel + ')', qaCollection.limit(5));
 
-          'final_water_area_safe_km2',
-          'final_dw_component_area_safe_km2',
-          'final_s1_component_area_safe_km2',
+        Export.table.toDrive({
+          collection: qaCollection,
+          description: QA_EXPORT_DESCRIPTION + '_' + batchLabel,
+          folder: QA_EXPORT_FOLDER,
+          fileNamePrefix: QA_FILE_PREFIX + '_' + batchLabel,
+          fileFormat: 'CSV',
+          selectors: [
+            'year', 'month', 'month_key', 'start_date', 'end_date',
+            'status_code',
+            'dw_available', 's1_available',
+            'dw_image_count', 's1_image_count',
+            'aoi_area_km2',
 
-          'final_water_area_diff_km2',
-          'final_water_area_abs_diff_km2',
-          'final_dw_component_area_diff_km2',
-          'final_s1_component_area_diff_km2'
-        ]
-      });
+            'threshold_original', 'threshold_safe',
+            'threshold_diff', 'threshold_abs_diff', 'threshold_same',
 
-    } else {
-      monthList.forEach(function(d) {
-        var key = monthKey(d.year, d.month);
-        var dwCount = dwCountMap[key] || 0;
-        var s1Count = s1CountMap[key] || 0;
+            'dw_has_gaps',
+            'dw_valid_area_km2', 'dw_nodata_area_km2', 'dw_water_area_raw_km2',
 
-        if (dwCount > 0) {
-          processMonth(d.year, d.month, s1Count > 0);
-        } else {
-          var mStr = (d.month < 10 ? '0' + d.month : d.month);
-          print('Skipping ' + d.year + '-' + mStr + ': no DW images.');
-        }
-      });
-    }
+            's1_valid_area_km2', 's1_valid_gap_area_km2',
+            's1_uncovered_gap_area_km2', 'unfilled_dw_gap_area_km2',
 
+            'final_water_area_orig_km2',
+            'final_dw_component_area_orig_km2',
+            'final_s1_component_area_orig_km2',
+
+            'final_water_area_safe_km2',
+            'final_dw_component_area_safe_km2',
+            'final_s1_component_area_safe_km2',
+
+            'final_water_area_diff_km2',
+            'final_water_area_abs_diff_km2',
+            'final_dw_component_area_diff_km2',
+            'final_s1_component_area_diff_km2'
+          ]
+        });
+
+      } else {
+        monthList.forEach(function(d) {
+          var key = monthKey(d.year, d.month);
+          var dwCount = dwCountMap[key] || 0;
+          var s1Count = s1CountMap[key] || 0;
+
+          if (dwCount > 0) {
+            processMonth(d.year, d.month, s1Count > 0);
+          } else {
+            var mStr = (d.month < 10 ? '0' + d.month : d.month);
+            print('Skipping ' + d.year + '-' + mStr + ': no DW images.');
+          }
+        });
+      }
+
+      runBatch(batchIndex + 1);
+    });
   });
-});
+}
+
+runBatch(0);
