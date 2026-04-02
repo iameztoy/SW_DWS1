@@ -20,9 +20,13 @@ var endYear    = 2021;
 var endMonth   =   12;
 
 // Optional year-based splitting to reduce memory pressure on long ranges.
-// 0 or 1 = process as a single range (legacy behavior).
-// >= 2   = split [startYear..endYear] into batches of N years.
-var yearsPerBatch = 0;
+// false = process the full selected range in a single run (legacy behavior).
+// true  = split [startYear..endYear] into batches of N years.
+var ENABLE_YEAR_BATCHING = false;
+
+// Number of years per batch when ENABLE_YEAR_BATCHING = true.
+// Minimum effective value is 1 (one task per year).
+var yearsPerBatch = 2;
 
 // Probability thresholds for Dynamic World
 var water_thr      = 0.5; // Currently not used directly inside processWaterMask()
@@ -78,14 +82,7 @@ function makeMonthList(sY, sM, eY, eM) {
 }
 
 function makeYearBatches(sY, sM, eY, eM, yearsStep) {
-  if (yearsStep <= 1) {
-    return [{
-      startYear: sY,
-      startMonth: sM,
-      endYear: eY,
-      endMonth: eM
-    }];
-  }
+  yearsStep = Math.max(1, Math.floor(yearsStep));
 
   var batches = [];
   var currentStartYear = sY;
@@ -705,7 +702,23 @@ function processMonth(y, m, hasS1) {
 // ********************
 // RUN
 // ********************
-var batchList = makeYearBatches(startYear, startMonth, endYear, endMonth, yearsPerBatch);
+var effectiveYearsPerBatch = Math.max(1, Math.floor(yearsPerBatch));
+
+if (ENABLE_YEAR_BATCHING && effectiveYearsPerBatch !== yearsPerBatch) {
+  print(
+    'yearsPerBatch was adjusted to ' + effectiveYearsPerBatch +
+    ' (minimum allowed value is 1).'
+  );
+}
+
+var batchList = ENABLE_YEAR_BATCHING
+  ? makeYearBatches(startYear, startMonth, endYear, endMonth, effectiveYearsPerBatch)
+  : [{
+      startYear: startYear,
+      startMonth: startMonth,
+      endYear: endYear,
+      endMonth: endMonth
+    }];
 
 var dwBase = ee.ImageCollection('GOOGLE/DYNAMICWORLD/V1')
   .filterBounds(aoi);
