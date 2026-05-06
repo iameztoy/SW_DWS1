@@ -55,7 +55,7 @@ var USE_SAFE_OTSU = true;
 // MAIN MODE
 // false = normal raster export mode
 // true  = QA mode only: export a monthly CSV table with thresholds and diagnostics
-var RUN_THRESHOLD_QA_ONLY = true;
+var RUN_THRESHOLD_QA_ONLY = false;
 
 // QA OPTIONS
 // In QA mode, include area diagnostics (DW no-data, S1 coverage, etc.)
