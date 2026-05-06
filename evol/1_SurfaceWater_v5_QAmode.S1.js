@@ -19,6 +19,8 @@
 // It does NOT filter by orbit pass or resolution for the "all scenes" stack,
 // because the aim is to diagnose the original threshold behavior.
 
+// It does not create the final water mask.
+
 // ======================================================
 // 0) PARAMETERS
 // ======================================================
