@@ -1,5 +1,5 @@
 // ********************************************
-// 2025/07/21 Iban Ameztoy JRC Consultancy
+// 2026/05/07 Iban Ameztoy JRC Consultancy
 // Batch water extraction: Dynamic World + Sentinel-1
 // + QA mode for threshold comparison and processing diagnostics
 //
