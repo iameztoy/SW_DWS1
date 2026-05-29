@@ -250,7 +250,7 @@ var USE_SAFE_OTSU = true;
 // Raster export profile
 // ------------------------
 var EXPORT_PROFILE = 'STANDARD';
-// Options: 'CORE' | 'STANDARD' | 'FULL'
+// Options: 'BASIC' | 'CORE' | 'STANDARD' | 'FULL'
 
 var EXPORT_LEGACY_FILL_FLAG = true;
 
