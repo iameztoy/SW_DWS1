@@ -1,0 +1,26 @@
+# Keep repository text files stable across Windows and Unix tools.
+* text=auto eol=lf
+
+*.js text eol=lf
+*.py text eol=lf
+*.ipynb text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+
+# Binary and generated geospatial formats.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.tif binary
+*.tiff binary
+*.gpkg binary
+*.shp binary
+*.shx binary
+*.dbf binary
+*.sqlite binary
+*.sqlite3 binary

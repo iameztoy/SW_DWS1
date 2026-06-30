@@ -1,0 +1,33 @@
+# Create the project-local environment with:
+#   conda env create --prefix .\.envs\sw-dws1 --file environment.yml
+#
+# Keep the environment folder out of Git. The .gitignore file excludes .envs/.
+name: sw-dws1
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - earthengine-api
+  - geemap
+  - jupyterlab
+  - ipykernel
+  - ipywidgets
+  - jupyterlab_widgets
+  - ipyleaflet
+  - pandas
+  - geopandas
+  - localtileserver
+  - shapely
+  - pyproj
+  - rasterio
+  - rioxarray
+  - xarray
+  - netcdf4
+  - matplotlib
+  - scipy
+  - pyyaml
+  - tqdm
+  - pytest
+  - nbstripout
+  - pip
