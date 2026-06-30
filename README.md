@@ -1,128 +1,64 @@
-Needs to be rewritten
+# Surface Water Workflow
 
-# Surface Water Workflow (Lake Tanganyika Basin)
+This repository contains Google Earth Engine (GEE) scripts and Python post-processing notebooks for surface-water extent mapping. The code is organized by development approach so the original Tanganyika workflow remains separate from newer water-extent methods.
 
-This repository contains a **Google Earth Engine (GEE) + Python post-processing workflow** to extract, clean, analyze, and evaluate monthly surface-water maps for the Lake Tanganyika basin.
-
-The project combines:
-- **Remote sensing water detection in GEE** (Dynamic World + Sentinel-1).
-- **Post-processing and quality controls** for monthly binary water layers.
-- **Export and analytics scripts** (change metrics, seasonality, trends, recurrence, etc.).
-- **Python notebooks** for desktop GIS post-processing (mosaicking, vectorization, IoU assessment).
-
----
-
-## Repository structure
+## Repository Structure
 
 ```text
-main/
-├─ GEE/
-│  ├─ 0_visualizeTiles
-│  ├─ 1_SurfaceWater_fx_v4
-│  ├─ 2_Process_S1_LOSH_mask_v.1.2_testing
-│  ├─ 3_1_Visualize_WS_v1
-│  ├─ 4_PostProcessing_v1.4f
-│  ├─ 5_Export_SW
-│  └─ 6_Insights_v2b
-└─ post_processing/
-   ├─ 1_mosaic.ipynb
-   ├─ 2_vectorization.ipynb
-   └─ 3_IoU.ipynb
+Approach1_Tanganyika/
+├─ main/
+│  ├─ 1_SurfaceWater_fx_v4.js
+│  ├─ 2_Lava_Emb_App_v2.2.js
+│  ├─ 2_Lava_Emb_simple.js
+│  ├─ 2_lava_fields_Tanganyika.js
+│  ├─ 3_1_Visualize_WS_v1.js
+│  ├─ 4_PostProcessing_v1.4h4.js
+│  ├─ 5_Export_SW.js
+│  └─ 6_Insights_v3app.js
+└─ postprocessing/
+   ├─ 7_1_mosaic.ipynb
+   ├─ 7_2_1_vectorization.ipynb
+   ├─ 7_3_IoU_1.ipynb
+   ├─ 8_4_0_RiverDischarge_test_reach_overlap_v2.ipynb
+   ├─ 8_4_1_RiverDischarge_Crossing_v2c.ipynb
+   └─ 8_4_2_RiverDischarge_Analysis.ipynb
+
+Approach2/
+├─ 1_SurfaceWater_v5.2b_unified.js
+└─ legacy/
+   ├─ 0_SurfaceWater_v5.js
+   ├─ 1_SurfaceWater_v5.1_QAmode.js
+   ├─ 1_SurfaceWater_v5.1_QAmode.S1.js
+   └─ 1_SurfaceWater_v5.2_unified.js
+
+Approach3/
+└─ 1_SurfaceWater_v5.2b_unified.js
+
+SWOT_RegGlo/
+├─ SWOT_cross.js
+└─ SWOTapp.js
 ```
 
----
+## Approaches
 
-## Objectives
+### Approach1_Tanganyika
 
-- Build a **monthly surface-water product** for the Lake Tanganyika basin.
-- Improve water detection by combining **Dynamic World probabilities** with **Sentinel-1 SAR thresholding**.
-- Reduce false positives/negatives using **terrain, seasonality, and temporal consistency rules**.
-- Produce actionable outputs for monitoring:
-  - monthly maps,
-  - long-term occurrence/change layers,
-  - recurrence/transition behavior,
-  - flood/dry dynamics and trend indicators.
-- Support downstream QA and benchmarking through **mosaic, vectorization, and IoU analysis** notebooks.
+Original Tanganyika project workflow used to calculate surface-water extent. It combines GEE scripts for monthly water detection, post-processing, export, and insights with local Python notebooks for mosaicking, vectorization, IoU assessment, and river-discharge analysis.
 
----
+### Approach2
 
-## Available scripts (GEE)
+Newer development based on the Tanganyika workflow. The current working script is `1_SurfaceWater_v5.2b_unified.js`; intermediate versions are kept in `legacy/`.
 
-> These scripts are intended to run in the Google Earth Engine Code Editor.  
-> Most scripts include a **User Settings/Parameters** section at the top.
+### Approach3
 
-### `main/GEE/0_visualizeTiles`
-Creates and visualizes a square processing grid over the AOI (HydroBASINS ID for Lake Tanganyika). Useful to inspect tile layout before batch processing.
+Baseline copy of `Approach2/1_SurfaceWater_v5.2b_unified.js`. This folder is reserved for the next development path, where the Sentinel-1 Otsu-thresholding approach will be replaced by a different method.
 
-### `main/GEE/1_SurfaceWater_fx_v4`
-Core monthly water-extraction script:
-- filters Dynamic World and Sentinel-1 by month,
-- creates Dynamic World water/flooded vegetation masks,
-- applies Otsu thresholding to SAR,
-- merges masks and exports monthly water products to an Earth Engine asset path.
+### SWOT_RegGlo
 
-### `main/GEE/2_Process_S1_LOSH_mask_v.1.2_testing`
-Testing/tuning script focused on Sentinel-1 + LOSH/terrain-informed masking logic and date utilities. Useful for validating masking behavior and temporal helper functions before running the full production chain.
-
-### `main/GEE/3_1_Visualize_WS_v1`
-Visualization and inspection workflow for water products with AOI and slope context layers. Useful for manual QC and for inspecting class behavior in map view.
-
-### `main/GEE/4_PostProcessing_v1.4f`
-Main post-processing engine (large script) that applies additional rule-based cleaning and temporal logic to monthly products. Includes options for testing geometry/full AOI and supports multiple exports including class-level outputs.
-
-### `main/GEE/5_Export_SW`
-Exports post-processed monthly surface-water imagery:
-- either queues Drive exports, or
-- prints direct download URLs.
-
-Configured for a post-processed ImageCollection and WGS84 output at 10 m target scale.
-
-### `main/GEE/6_Insights_v2b`
-Generates analytical layers from the post-processed collection, including:
-- occurrence by era,
-- absolute/normalized change,
-- seasonality,
-- recurrence and transitions,
-- max extent,
-- onset/cessation and wet-season length,
-- flood/dry frequencies,
-- flip rate/net shift,
-- trend diagnostics and summary indicators.
-
----
-
-## Available notebooks (`main/post_processing`)
-
-These notebooks complement GEE outputs for local/desktop processing (Python GIS stack).
-
-### `1_mosaic.ipynb`
-Builds monthly raster mosaics from tiled GeoTIFF outputs, with optional completeness and consistency checks, and diagnostic summaries.
-
-### `2_vectorization.ipynb`
-Converts monthly raster mosaics to vector polygons with memory-safe polygonization flow, AOI buffering, dissolve/cleanup steps, and inventory QA outputs.
-
-### `3_IoU.ipynb`
-Computes overlap and comparison metrics (IoU, Dice, precision/recall, area and boundary diagnostics) between paired monthly vector products (e.g., DEM-based vs GEE-derived outputs), with table/plot exports.
-
----
-
-## Typical workflow
-
-1. **Tile/AOI setup & map checks** (`0_visualizeTiles`, `3_1_Visualize_WS_v1`).
-2. **Monthly extraction** (`1_SurfaceWater_fx_v4`) to build base water layers.
-3. **Rule-based post-processing** (`4_PostProcessing_v1.4f`).
-4. **Export final monthly products** (`5_Export_SW`).
-5. **Generate insights layers** (`6_Insights_v2b`).
-6. Optional local desktop steps:
-   - mosaic tiles (`1_mosaic.ipynb`),
-   - vectorize (`2_vectorization.ipynb`),
-   - evaluate agreement (`3_IoU.ipynb`).
-
----
+Separate SWOT RegGlo application scripts. This folder is intentionally kept outside the approach folders.
 
 ## Notes
 
-- Several scripts are currently parameterized for the **Lake Tanganyika basin** (`HYBAS_ID = 1041259950`) and specific Earth Engine asset paths.
-- Before running, update project-specific asset IDs, date ranges, export folders, and toggles in each script's settings block.
+- Most GEE scripts are intended to run in the Google Earth Engine Code Editor.
+- Several scripts contain project-specific asset IDs, date ranges, export folders, and toggles that should be reviewed before execution.
 - The repository is script/notebook oriented and does not currently define a Python package or CLI.
-
