@@ -2,6 +2,7 @@
 
 __all__ = [
     "aoi",
+    "availability",
     "datasets",
     "exports",
     "gee_session",

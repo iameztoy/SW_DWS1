@@ -19,7 +19,7 @@ Required parameters:
 | Parameter | Initial value | Notes |
 | --- | --- | --- |
 | `ee_project` | user-provided | Google Cloud project with Earth Engine access. Prefer `SW_DWS1_EE_PROJECT` in the shell instead of editing tracked files. |
-| `aoi` | HydroBASINS level 4 Tanganyika basin, unless overridden | Match the current JS baseline first. |
+| `aoi` | HydroBASINS basin, point buffer, bbox, GeoJSON, or drawn notebook geometry | HydroBASINS level 4 Tanganyika basin matches the current JS baseline. |
 | `start_date` | user-provided | Must be checked against product availability. |
 | `end_date` | user-provided | End date is exclusive in Earth Engine `filterDate`. |
 
@@ -32,11 +32,11 @@ Optional parameters:
 | `dw_flooded_veg_threshold` | `0.3` | Match the JS baseline for flooded vegetation. |
 | `include_opera_hls_sentinel2` | `False` | Default false to avoid reusing Sentinel-2 information already represented by Dynamic World. |
 | `hls_pair_window_days` | `1` | Initial tolerance for individual-date pairing. Prefer same UTC day where possible. |
-| `s1_pair_window_days` | `3` | Initial tolerance for individual-date pairing. To be tested. |
+| `s1_pair_window_days` | `3` | Strict nearest-observation tolerance for individual-date pairing. Wider windows should be explicit sensitivity tests. |
 | `monthly_reduce_method` | `water_if_any_valid_water` | Mirrors the current monthly "any water observation" behavior. |
-| `export_scale_m` | `30` | OPERA products are 30 m. Dynamic World is 10 m, so resampling policy must be explicit. |
+| `export_scale_m` | `10` | Export grid is 10 m to preserve Dynamic World detail where Dynamic World supplies the pixel. OPERA-derived pixels remain limited by 30 m source products. |
 | `export_crs` | `EPSG:4326` | Match the JS baseline first, then review if a projected CRS is better for area work. |
-| `output_profile` | `standard` | Include final class, validity, source, date, and basic diagnostics. |
+| `output_profile` | `standard` | Default multi-band scientific output. Optional `encoded` and `standard_plus_encoded` profiles add or select a compact class/source/date band. |
 
 Important date warning:
 
@@ -145,6 +145,12 @@ Relevant bands:
 | `253` | Cloud/cloud shadow/adjacent | Invalid for water decision. |
 | `254` | Ocean masked | Invalid for basin water decision. |
 
+Earth Engine reports this `WTR_Water_classification` band with integer range `0..255`.
+Any synthetic empty/template WTR image used to keep monthly collections non-empty
+must use the same byte range, for example `.toByte()`, otherwise Earth Engine will
+reject the collection as non-homogeneous even if the signed integer precision looks
+similar.
+
 Design use:
 
 - Default gap-fill should filter out `SENSOR == "MSI"` so Landsat-derived HLS fills Dynamic World gaps without reusing Sentinel-2-derived information.
@@ -190,6 +196,10 @@ Relevant bands:
 | `250` | HAND/topographic height masked | Invalid for water decision. |
 | `251` | Layover/shadow masked | Invalid for water decision. |
 | `254` | Ocean masked | Invalid for basin water decision. |
+
+Earth Engine reports this `WTR_Water_classification` band with integer range `0..255`.
+Use the same byte range for any synthetic empty/template WTR image merged into an
+OPERA S1 collection.
 
 Design use:
 
@@ -242,6 +252,12 @@ Initial standard output bands:
 | `gap_status` | byte | `0=resolved by Dynamic World`, `1=filled by HLS`, `2=filled by S1`, `3=still unresolved`. |
 | `source_bits` | byte | Diagnostic bitmask: `1=DW valid`, `2=HLS Landsat valid`, `4=HLS Sentinel-2 diagnostic valid`, `6=mixed HLS Landsat+Sentinel-2 stream`, `8=S1 valid`. |
 
+Optional compact output:
+
+- `encoded_class_source_date` is available when `output_profile` is `encoded` or `standard_plus_encoded`.
+- It encodes class, selected source, and source date in one int64 band: `CSSYYYYMMDD`.
+- It is a convenience derivative only; the standard multi-band product remains the recommended scientific output because it preserves provenance and diagnostics separately.
+
 Initial `source` codes:
 
 | Code | Meaning |
@@ -284,6 +300,7 @@ Known limitation:
 
 - Landsat-HLS and Sentinel-1 acquisitions within a tolerance window are not simultaneous with the Dynamic World Sentinel-2 acquisition. The source date bands are therefore mandatory, and the tolerance should be small and visible in outputs.
 - Do not derive monthly area by summing individual acquisition-date products. The same HLS or S1 scene can be paired to more than one Dynamic World anchor date.
+- Keep default acquisition pairing strict: HLS Landsat-only within 1 day and OPERA S1 within 3 days. Wider windows should be explicit sensitivity settings, not silent defaults.
 
 Likely second individual-date mode:
 
@@ -325,7 +342,19 @@ Recommendation:
 
 - Use `source_first_yyyymmdd` and `source_last_yyyymmdd` for monthly aggregate products. Keep `source_date_yyyymmdd` for individual-date products.
 - The current monthly prototype keeps `source_date_yyyymmdd` as the first valid source date for compatibility, and also adds explicit `source_first_yyyymmdd` and `source_last_yyyymmdd` bands. Monthly analyses should use the explicit first/last bands.
-- Start the integrated product at 30 m because both OPERA products are 30 m. Keep Dynamic World 10 m detail as diagnostic counts or fractions when aggregating to 30 m. A 10 m final product should be a deliberate backward-compatibility decision, because upsampling OPERA to 10 m creates false spatial precision.
+- Export the integrated product on a 10 m grid to preserve Dynamic World detail where Dynamic World supplies the pixel. OPERA-derived pixels remain limited by the 30 m OPERA source products, so source bands are mandatory when interpreting 10 m outputs. See `output_parameters_and_pairing.md` for the practical caveat.
+
+## AOI And Tiled Export Strategy
+
+The workflow now supports AOI modes shared by the notebook and runner script:
+
+- `basin`: HydroBASINS basin selection by `HYBAS_ID` and `HYDROBASINS_LEVEL`. Level 4 is the default because it matches the reference script pattern.
+- `point_buffer`: small test AOI around a lon/lat point.
+- `bbox`: small rectangular test AOI from west/south/east/north coordinates.
+- `geojson`: local GeoJSON AOI for script runs.
+- `drawn`: notebook-only mode using the last geometry drawn in geemap.
+
+Large AOIs should be previewed with an Earth Engine covering grid before export. The grid is built with `Geometry.coveringGrid` using a configurable CRS and tile scale. If tiling is enabled, export labels append deterministic suffixes such as `tile_0001`, and one Earth Engine export task is created per selected tile. If tiling is disabled, one task is created for the whole AOI. In both modes the target path is configured as an Earth Engine image collection/folder root, and the individual image ID is derived from the product label plus optional tile suffix.
 
 ## SWOT Compatibility
 

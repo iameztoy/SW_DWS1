@@ -31,6 +31,28 @@ class WaterClass:
     BOTH_WATER_TYPES = 3
 
 
+class OperaHlsWtrClass:
+    """OPERA DSWx-HLS WTR_Water_classification values used by Approach3."""
+
+    NOT_WATER = 0
+    OPEN_WATER = 1
+    PARTIAL_SURFACE_WATER = 2
+    SNOW_ICE = 252
+    CLOUD_OR_SHADOW = 253
+    OCEAN_MASKED = 254
+
+
+class OperaS1WtrClass:
+    """OPERA DSWx-S1 WTR_Water_classification values used by Approach3."""
+
+    NOT_WATER = 0
+    OPEN_WATER = 1
+    INUNDATED_VEGETATION = 3
+    HAND_MASKED = 250
+    LAYOVER_SHADOW_MASKED = 251
+    OCEAN_MASKED = 254
+
+
 class SourceCode:
     """Class-specific source/provenance codes."""
 
@@ -166,10 +188,10 @@ def normalize_opera_hls_image(
     """Normalize one OPERA DSWx-HLS image to the common Approach3 bands."""
     wtr = image.select("WTR_Water_classification")
 
-    open_water = wtr.eq(1)
-    partial = wtr.eq(2)
-    valid_nonwater = wtr.eq(0)
-    valid = wtr.lt(252)
+    open_water = wtr.eq(OperaHlsWtrClass.OPEN_WATER)
+    partial = wtr.eq(OperaHlsWtrClass.PARTIAL_SURFACE_WATER)
+    valid_nonwater = wtr.eq(OperaHlsWtrClass.NOT_WATER)
+    valid = wtr.lt(OperaHlsWtrClass.SNOW_ICE)
 
     water = open_water.Or(partial).rename("water").toByte().updateMask(valid)
     water_class = _class_image(open_water, partial, valid)
@@ -198,10 +220,10 @@ def normalize_opera_s1_image(image: ee.Image) -> ee.Image:
     """Normalize one OPERA DSWx-S1 image to the common Approach3 bands."""
     wtr = image.select("WTR_Water_classification")
 
-    open_water = wtr.eq(1)
-    inundated = wtr.eq(3)
-    valid_nonwater = wtr.eq(0)
-    valid = wtr.lt(250)
+    open_water = wtr.eq(OperaS1WtrClass.OPEN_WATER)
+    inundated = wtr.eq(OperaS1WtrClass.INUNDATED_VEGETATION)
+    valid_nonwater = wtr.eq(OperaS1WtrClass.NOT_WATER)
+    valid = wtr.lt(OperaS1WtrClass.HAND_MASKED)
 
     water = open_water.Or(inundated).rename("water").toByte().updateMask(valid)
     water_class = _class_image(open_water, inundated, valid)

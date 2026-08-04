@@ -1,0 +1,432 @@
+CONTEXT: DYNAMIC WORLD + OPERA HIERARCHICAL FUSION
+
+Two related Google Earth Engine scripts have been developed and synchronized:
+
+1. DW_OPERA_hierarchical_fusion_v1_4_0.txt
+2. DW_OPERA_fusion_process_inspector_v1_4_0.txt
+
+Both scripts belong to the same workflow and must be treated as a paired development from version v1.4.0 onwards. Any future change affecting fusion logic, class definitions, source priority, temporal aggregation, NoData handling or post-processing must be evaluated in both scripts and, where relevant, implemented simultaneously using the same version number.
+
+The scripts do not have the same purpose and should not be forced to contain the same functionality.
+
+================================================================
+1. MAIN PRODUCTION SCRIPT
+================================================================
+
+Filename:
+DW_OPERA_hierarchical_fusion_v1_4_0.txt
+
+Version inside the code:
+SCRIPT_VERSION = 'v1.4.0'
+
+Purpose:
+The main script produces a time series of harmonized surface-water classifications by combining:
+
+1. Google Dynamic World
+2. OPERA DSWx-HLS, restricted to Landsat/OLI
+3. OPERA DSWx-S1
+
+It supports:
+
+- monthly or fixed-day temporal windows;
+- non-overlapping or moving windows;
+- optional partial final windows;
+- HydroBASINS or drawn AOIs;
+- image export to Earth Engine ImageCollections;
+- selectable operational and diagnostic bands;
+- single-collection or split core/diagnostics export layouts;
+- preview of a selected temporal window;
+- a separate NODATA_EVALUATION mode;
+- single or batched NoData CSV exports;
+- source-image diagnostics by batch;
+- optional post-fusion HAND correction.
+
+The end date of every temporal window is exclusive.
+
+================================================================
+2. VISUAL INSPECTOR
+================================================================
+
+Filename:
+DW_OPERA_fusion_process_inspector_v1_4_0.txt
+
+Version inside the code:
+INSPECTOR_VERSION = 'v1.4.0'
+
+Purpose:
+The inspector is a visual verification tool for one AOI and one selected date window.
+
+It is not:
+
+- a time-series exporter;
+- a replacement for the production script;
+- a complete statistical NoData-analysis tool;
+- expected to reproduce every production configuration or export option.
+
+Its purpose is to display the successive processing stages so the user can visually verify that the hierarchy is being applied correctly:
+
+Dynamic World
+    ↓
+NoData after Dynamic World
+    ↓
+HLS contribution to DW gaps
+    ↓
+NoData after DW + HLS
+    ↓
+S1 status and contribution on remaining gaps
+    ↓
+Final fused classification
+    ↓
+Final unresolved NoData
+
+The inspector also visualizes selected supporting information, including DW observation support, OPERA native temporal modes, S1 special-mask conditions and optional HAND post-processing.
+
+================================================================
+3. SHARED HIERARCHICAL FUSION LOGIC
+================================================================
+
+The two scripts currently implement the same source-priority rules.
+
+Priority order:
+
+Dynamic World → OPERA HLS Landsat/OLI → OPERA S1
+
+The hierarchy must remain strict:
+
+1. Every valid Dynamic World result is preserved.
+2. HLS is evaluated only where Dynamic World is NoData.
+3. A valid HLS classification blocks S1 at that pixel.
+4. S1 is evaluated only where the pixel remains NoData after Dynamic World and HLS.
+5. A lower-priority source must never overwrite a valid higher-priority result.
+
+Dynamic World validity:
+A pixel is valid for a temporal window when at least one unmasked official Dynamic World label observation exists.
+
+Dynamic World NoData is not a native class. Harmonized value 255 is assigned when the number of valid DW label observations is zero.
+
+HLS valid native WTR classes:
+
+- HLS 0 = valid non-water
+- HLS 1 = open water
+- HLS 2 = partial surface water
+
+All three HLS classes 0/1/2 resolve a Dynamic World gap.
+
+HLS class 0 is important: it is a valid non-water decision, reduces NoData and prevents lower-priority S1 from introducing water at that pixel.
+
+S1 valid native WTR classes:
+
+- S1 0 = valid non-water
+- S1 1 = open water
+- S1 3 = inundated vegetation
+
+All three S1 classes 0/1/3 resolve only gaps remaining after Dynamic World and HLS.
+
+S1 class 0 is currently considered a valid thematic classification. It reduces remaining NoData and is recorded as an S1 non-water resolution.
+
+These S1 values are not valid thematic classifications and never resolve a gap:
+
+- 250 = HAND masked
+- 251 = layover/shadow masked
+- 254 = ocean masked
+- 255 = fill/NoData
+
+A final value of 255 means that:
+
+- Dynamic World had no valid label observation;
+- HLS had no valid selected-period mode among 0/1/2;
+- S1 had no valid selected-period mode among 0/1/3.
+
+================================================================
+4. HARMONIZED FINAL CLASSES
+================================================================
+
+Both scripts use the same harmonized coding:
+
+0   = valid non-water / other
+1   = open water
+2   = inundated vegetation or partial surface water
+3   = both Dynamic World water components detected in the window
+255 = unresolved NoData
+
+Class 2 can originate from:
+
+- Dynamic World inundated/flooded vegetation;
+- HLS native class 2, partial surface water;
+- S1 native class 3, inundated vegetation.
+
+Class 3 can originate only from Dynamic World.
+
+Class 3 means that the Dynamic World open-water condition and the Dynamic World inundated-vegetation condition were both satisfied within the temporal window. The qualifying observations do not necessarily have to be the same acquisition.
+
+================================================================
+5. OPTIONAL DYNAMIC WORLD CLASS 3
+================================================================
+
+Version v1.4.0 introduced the synchronized option:
+
+USE_DW_COMBINED_CLASS_3 = true
+
+Default:
+true
+
+When true, the possible final codes are:
+
+0, 1, 2, 3 and 255
+
+A Dynamic World pixel meeting both the open-water and inundated-vegetation conditions becomes class 3.
+
+When false, the possible final codes are:
+
+0, 1, 2 and 255
+
+For a pixel meeting both Dynamic World conditions:
+
+- if the qualifying open-water observation count is larger, assign class 1;
+- if the qualifying inundated-vegetation observation count is larger, assign class 2;
+- if the two counts are equal, prioritize open water and assign class 1.
+
+The main script exposes this as a configuration variable.
+
+The inspector exposes the same rule through a checkbox initialized from the same default value.
+
+The class-3 option affects only the classification assigned to already-valid Dynamic World pixels. It does not affect:
+
+- Dynamic World validity;
+- Dynamic World NoData;
+- HLS or S1 eligibility;
+- source priority;
+- final unresolved NoData;
+- NoData percentages.
+
+The main script records the class-3 setting and overlap-assignment rule in exported image metadata and in NODATA_EVALUATION CSV rows.
+
+================================================================
+6. DYNAMIC WORLD TEMPORAL RULES
+================================================================
+
+The current default main-script settings are:
+
+WATER_THRESHOLD = 0.50
+WATER_LOW_THRESHOLD = 0.05
+FLOODED_VEG_THRESHOLD = 0.40
+FLOODED_VEG_DETECTION_MODE = 'LABEL_AND_PROBABILITY'
+
+MIN_WATER_OBSERVATIONS = 1
+MIN_FLOODED_VEG_OBSERVATIONS = 1
+
+WATER_TEMPORAL_AGGREGATION_MODE = 'COUNT'
+FLOODED_VEG_TEMPORAL_AGGREGATION_MODE = 'COUNT'
+
+Dynamic World open water is based on individual observations whose water probability is greater than WATER_THRESHOLD.
+
+With the current flooded-vegetation detection mode, a qualifying flooded-vegetation observation must satisfy both:
+
+- official Dynamic World label = 3;
+- flooded_vegetation probability > FLOODED_VEG_THRESHOLD.
+
+The production script can use COUNT or FREQUENCY temporal aggregation.
+
+The inspector intentionally reproduces only the current default visual-verification configuration:
+
+- COUNT aggregation;
+- minimum one qualifying observation;
+- LABEL_AND_PROBABILITY flooded-vegetation detection;
+- water threshold 0.50;
+- flooded-vegetation threshold 0.40.
+
+This limited inspector configuration is intentional. It does not need to expose every production option unless a future comparison specifically requires it.
+
+================================================================
+7. OPERA TEMPORAL AGGREGATION
+================================================================
+
+For each processing window:
+
+- HLS uses the per-pixel temporal mode calculated only from valid native classes 0/1/2.
+- S1 uses the per-pixel temporal mode calculated only from valid native classes 0/1/3.
+
+Invalid OPERA mask/fill values do not participate in the temporal mode.
+
+================================================================
+8. PROVENANCE
+================================================================
+
+The main script can produce the water_source band:
+
+1   = Dynamic World
+2   = OPERA DSWx-HLS Landsat/OLI
+3   = OPERA DSWx-S1
+255 = unresolved NoData
+
+water_source identifies which source supplied the final thematic decision. It does not mean that the pixel is necessarily water.
+
+For example, an S1 class-0 non-water resolution receives:
+
+water_class = 0
+water_source = 3
+
+The inspector does not currently need to reproduce every production provenance or export diagnostic because its primary purpose is visual verification of the fusion sequence.
+
+================================================================
+9. OPTIONAL HAND POST-PROCESSING
+================================================================
+
+Both scripts implement the same optional setting:
+
+APPLY_S1_HAND_POSTPROCESSING = false
+
+It is disabled by default.
+
+This correction is applied only after the complete Dynamic World → HLS → S1 hierarchy.
+
+A water-related pre-HAND class is reclassified to valid non-water class 0 only when:
+
+- the pre-HAND class is 1, 2 or 3;
+- at least one S1 WTR observation in the temporal window equals 250;
+- there are zero valid S1 thematic observations among 0/1/3 in that window.
+
+The correction:
+
+- does not participate in source gap filling;
+- does not overwrite the source hierarchy;
+- does not create NoData;
+- does not use layover/shadow 251 as a backward correction;
+- preserves water_source as the source of the pre-HAND decision;
+- records the change through hand_postprocessing_applied;
+- preserves water_class_pre_hand as a selectable diagnostic.
+
+Because HAND changes a water-related class to valid class 0, it does not alter final NoData totals.
+
+================================================================
+10. NODATA_EVALUATION IN THE MAIN SCRIPT
+================================================================
+
+NODATA_EVALUATION is a separate main-script mode.
+
+It calculates coverage using the same validity and hierarchy rules as the water-mask workflow, but it does not need to construct every classification and diagnostic band.
+
+The principal stages are:
+
+1. NoData after Dynamic World
+2. NoData after Dynamic World + HLS
+3. Final NoData after S1
+
+It distinguishes total, water and non-water OPERA resolutions.
+
+HLS:
+
+- total resolved = native modal classes 0/1/2;
+- water gap fill = classes 1/2;
+- non-water resolution = class 0.
+
+S1:
+
+- total resolved = native modal classes 0/1/3;
+- water gap fill = classes 1/3;
+- non-water resolution = class 0.
+
+The following consistency relationships should hold:
+
+S1 total resolved
+= S1 water resolved + S1 non-water resolved
+
+NoData after HLS
+= S1 total resolved + final NoData
+
+Dynamic World NoData
+= HLS total resolved + S1 total resolved + final NoData
+
+The CSV includes pixel counts and percentages relative to:
+
+- the complete AOI;
+- Dynamic World NoData;
+- or the previous unresolved-NoData stage, depending on the metric.
+
+The default NoData QA scale is 100 m. This affects QA pixel counts and percentages but not the 10 m water-mask export resolution.
+
+The NoData evaluation supports a single CSV task or user-defined year/fractional-year batches. It also prints batch and input-image diagnostics.
+
+The class-3 option is recorded in the CSV for traceability but does not change NoData coverage.
+
+================================================================
+11. INTENTIONAL DIFFERENCES BETWEEN THE SCRIPTS
+================================================================
+
+The scripts should agree on shared scientific and classification logic, but they should not be identical.
+
+The main script is responsible for:
+
+- time-series construction;
+- configurable temporal aggregation;
+- image exports;
+- band selection;
+- metadata;
+- NoData CSV analysis;
+- task batching;
+- production diagnostics.
+
+The inspector is responsible for:
+
+- one selected AOI and date window;
+- visual inspection of successive processing stages;
+- visual confirmation of source priority;
+- distinguishing valid class 0 from actual NoData;
+- checking remaining gaps;
+- observing S1 special-mask conditions;
+- comparing results before and after optional HAND correction.
+
+Missing production features in the inspector are not automatically alignment errors.
+
+An alignment error exists only when both scripts are intended to perform the same operation but apply different:
+
+- class definitions;
+- thresholds under the equivalent configuration;
+- temporal decision rules;
+- valid/invalid native OPERA classes;
+- source priority;
+- gap-filling eligibility;
+- NoData definition;
+- HAND correction logic;
+- class-3 handling.
+
+================================================================
+12. VERSIONING AND FUTURE DEVELOPMENT RULE
+================================================================
+
+Version v1.4.0 is the first explicitly synchronized baseline.
+
+For any future modification:
+
+1. First identify whether the change affects shared fusion logic or only one script’s specific purpose.
+2. If it affects shared logic, modify and validate both scripts together.
+3. Give both scripts the same new version number.
+4. Include the version number in:
+   - the filename;
+   - the version variable inside the code;
+   - relevant production metadata and export naming.
+5. Do not add complete production functionality to the inspector unless required for visual verification.
+6. Do not remove, reorganize or alter unrelated operations without an explicit request.
+7. Preserve the strict Dynamic World → HLS → S1 hierarchy unless a new decision explicitly changes it.
+
+================================================================
+13. NEXT INTENDED TASK
+================================================================
+
+An additional development, created separately and not previously discussed in this workflow, will be introduced for comparison.
+
+The initial task should be comparative, not automatically corrective.
+
+Codex should:
+
+1. Read the two v1.4.0 scripts and the additional development.
+2. Identify which operations are conceptually comparable.
+3. Compare final classes, source hierarchy, temporal aggregation, valid/invalid values, NoData handling and any post-processing.
+4. Distinguish:
+   - genuine logical inconsistencies;
+   - intentional differences caused by different purposes;
+   - features present in only one development;
+   - ambiguous decisions requiring clarification.
+5. Report the findings before changing any code.
+6. Do not assume that every feature of the additional development must be transferred to the paired scripts.
+7. If code changes are later requested, apply shared decisions to both paired scripts and synchronize their next version number.

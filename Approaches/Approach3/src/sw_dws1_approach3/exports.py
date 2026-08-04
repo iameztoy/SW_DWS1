@@ -20,6 +20,9 @@ ACQUISITION_EXPORT_BANDS = [
     "source_bits",
 ]
 
+ENCODED_SUMMARY_BAND = "encoded_class_source_date"
+ENCODED_EXPORT_BANDS = [ENCODED_SUMMARY_BAND]
+
 MONTHLY_EXPORT_BANDS = ACQUISITION_EXPORT_BANDS + [
     "source_first_yyyymmdd",
     "source_last_yyyymmdd",
@@ -44,7 +47,7 @@ class ExportConfig:
 
     asset_root: str | None = None
     description_prefix: str = "approach3"
-    scale_m: int = 30
+    scale_m: int = 10
     crs: str = "EPSG:4326"
     max_pixels: float = 1e13
     pyramiding_policy: str = "mode"
@@ -67,6 +70,68 @@ def build_asset_id(asset_root: str, label: str) -> str:
 def build_task_description(prefix: str, label: str) -> str:
     """Build an Earth Engine task description."""
     return safe_task_label(f"{prefix}_{label}")
+
+
+def add_encoded_summary_band(
+    image: ee.Image,
+    *,
+    date_band: str = "source_date_yyyymmdd",
+    band_name: str = ENCODED_SUMMARY_BAND,
+) -> ee.Image:
+    """Add a compact integer band encoding class, source, and source date.
+
+    The encoded value is `CSSYYYYMMDD`:
+    - `C`: class code (`1=open water`, `2=inundated/partial`, `3=both`, `4=valid non-water`,
+      `0=unresolved/no source`);
+    - `S`: source rank (`1=Dynamic World`, `2=OPERA HLS`, `3=OPERA S1`, `0=no source`);
+    - `YYYYMMDD`: source date from `date_band`.
+
+    The default multi-band export remains the scientific product. This encoded
+    band is a convenience output for compact QA or systems that strongly prefer
+    one-band categorical rasters.
+    """
+    water_class = image.select("water_class").unmask(0)
+    valid = image.select("valid_final").unmask(0).eq(1)
+    class_digit = (
+        ee.Image.constant(0)
+        .where(valid.And(water_class.eq(1)), 1)
+        .where(valid.And(water_class.eq(2)), 2)
+        .where(valid.And(water_class.eq(3)), 3)
+        .where(valid.And(water_class.eq(0)), 4)
+        .toInt64()
+    )
+    source_digit = image.select("source_rank").unmask(0).toInt64()
+    date_value = image.select(date_band).unmask(0).toInt64()
+    encoded = (
+        class_digit.multiply(1_000_000_000)
+        .add(source_digit.multiply(100_000_000))
+        .add(date_value)
+        .rename(band_name)
+        .toInt64()
+    )
+    return image.addBands(encoded)
+
+
+def export_bands_for_profile(
+    *,
+    product_mode: str,
+    output_profile: str,
+) -> list[str]:
+    """Return export bands for a product mode and output profile."""
+    if product_mode == "acquisition":
+        standard_bands = ACQUISITION_EXPORT_BANDS
+    elif product_mode in {"monthly", "monthly_batch"}:
+        standard_bands = MONTHLY_EXPORT_BANDS
+    else:
+        raise ValueError('product_mode must be "acquisition", "monthly", or "monthly_batch".')
+
+    if output_profile == "standard":
+        return standard_bands
+    if output_profile == "encoded":
+        return ENCODED_EXPORT_BANDS
+    if output_profile == "standard_plus_encoded":
+        return standard_bands + ENCODED_EXPORT_BANDS
+    raise ValueError('output_profile must be "standard", "encoded", or "standard_plus_encoded".')
 
 
 def export_image_to_asset(

@@ -2,7 +2,7 @@
 
 This script is intentionally conservative. It prints source counts and product
 metadata by default. It starts an Earth Engine export only when START_EXPORT is
-set to True and EXPORT_ASSET_ROOT is provided.
+set to True and EXPORT_IMAGE_COLLECTION is provided.
 """
 
 from __future__ import annotations
@@ -34,6 +34,16 @@ def _env_float(name: str, default: float) -> float:
     return float(_env_str(name, str(default)))
 
 
+def _env_optional_bbox(name: str) -> tuple[float, float, float, float] | None:
+    value = os.environ.get(name)
+    if value is None or value.strip() == "":
+        return None
+    parts = [float(part.strip()) for part in value.split(",")]
+    if len(parts) != 4:
+        raise ValueError(f"{name} must contain four comma-separated values: west,south,east,north")
+    return tuple(parts)  # type: ignore[return-value]
+
+
 def _env_bool(name: str, default: bool) -> bool:
     value = os.environ.get(name)
     if value is None or value.strip() == "":
@@ -53,9 +63,17 @@ EE_PROJECT = _env_str("SW_DWS1_EE_PROJECT", "your-google-cloud-project-id")
 # ---------------------------------------------------------------------------
 
 PRODUCT_MODE = _env_str("SW_DWS1_PRODUCT_MODE", "monthly")
-HYBAS_ID = _env_int("SW_DWS1_HYBAS_ID", 1041259950)
 START_DATE = _env_str("SW_DWS1_START_DATE", "2025-01-01")
 END_DATE = _env_str("SW_DWS1_END_DATE", "2025-02-01")  # Earth Engine filterDate end is exclusive.
+
+AOI_MODE = _env_str("SW_DWS1_AOI_MODE", "basin")
+HYBAS_ID = _env_int("SW_DWS1_HYBAS_ID", 1041259950)
+HYDROBASINS_LEVEL = _env_int("SW_DWS1_HYDROBASINS_LEVEL", 4)
+AOI_BBOX = _env_optional_bbox("SW_DWS1_AOI_BBOX")
+AOI_GEOJSON_PATH = _env_optional_str("SW_DWS1_AOI_GEOJSON_PATH", None)
+TEST_AOI_POINT_LON = _env_float("SW_DWS1_TEST_AOI_POINT_LON", 29.75)
+TEST_AOI_POINT_LAT = _env_float("SW_DWS1_TEST_AOI_POINT_LAT", -6.5)
+TEST_AOI_BUFFER_M = _env_int("SW_DWS1_TEST_AOI_BUFFER_M", 20000)
 
 DW_WATER_THRESHOLD = _env_float("SW_DWS1_DW_WATER_THRESHOLD", 0.5)
 DW_NONWATER_THRESHOLD = _env_float("SW_DWS1_DW_NONWATER_THRESHOLD", 0.05)
@@ -73,10 +91,18 @@ RUN_SAMPLE_CHECK = _env_bool("SW_DWS1_RUN_SAMPLE_CHECK", True)
 SAMPLE_POINT_LON = _env_float("SW_DWS1_SAMPLE_POINT_LON", 29.75)
 SAMPLE_POINT_LAT = _env_float("SW_DWS1_SAMPLE_POINT_LAT", -6.5)
 SAMPLE_BUFFER_M = _env_int("SW_DWS1_SAMPLE_BUFFER_M", 20000)
-SAMPLE_SCALE_M = _env_int("SW_DWS1_SAMPLE_SCALE_M", 30)
+SAMPLE_SCALE_M = _env_int("SW_DWS1_SAMPLE_SCALE_M", 10)
 SAMPLE_CHECK_BANDS = ["water", "water_class", "source_rank", "source_bits"]
 
+USE_TILING = _env_bool("SW_DWS1_USE_TILING", False)
+TILE_SCALE_M = _env_int("SW_DWS1_TILE_SCALE_M", 50000)
+TILE_CRS = _env_str("SW_DWS1_TILE_CRS", "EPSG:3857")
+MAX_PREVIEW_TILES = _env_int("SW_DWS1_MAX_PREVIEW_TILES", 12)
+MAX_TILES_TO_EXPORT = _env_int("SW_DWS1_MAX_TILES_TO_EXPORT", 1)
+
+OUTPUT_PROFILE = _env_str("SW_DWS1_OUTPUT_PROFILE", "standard")
 START_EXPORT = _env_bool("SW_DWS1_START_EXPORT", False)
+EXPORT_IMAGE_COLLECTION = _env_optional_str("SW_DWS1_EXPORT_IMAGE_COLLECTION", None)
 EXPORT_ASSET_ROOT = _env_optional_str(
     "SW_DWS1_EXPORT_ASSET_ROOT",
     None,
@@ -85,7 +111,7 @@ EXPORT_LABEL = _env_optional_str(
     "SW_DWS1_EXPORT_LABEL",
     None,
 )  # None uses a stable default label from PRODUCT_MODE, dates, and HYBAS_ID.
-EXPORT_SCALE_M = _env_int("SW_DWS1_EXPORT_SCALE_M", 30)
+EXPORT_SCALE_M = _env_int("SW_DWS1_EXPORT_SCALE_M", 10)
 EXPORT_CRS = _env_str("SW_DWS1_EXPORT_CRS", "EPSG:4326")
 EXPORT_MAX_PIXELS = _env_float("SW_DWS1_EXPORT_MAX_PIXELS", 1e13)
 MAX_BATCH_EXPORT_TASKS = _env_int("SW_DWS1_MAX_BATCH_EXPORT_TASKS", 1)
@@ -138,17 +164,120 @@ def _print_sample_check(image, bands: list[str]) -> None:
     print("Sample check histograms:", _sample_histogram(image, bands))
 
 
+def _print_aoi_and_grid_summary(aoi, grid, tile_config) -> None:
+    from sw_dws1_approach3.aoi import aoi_summary
+    from sw_dws1_approach3.tiling import grid_summary
+
+    print(
+        "AOI configuration:",
+        {
+            "mode": AOI_MODE,
+            "hybas_id": HYBAS_ID if AOI_MODE == "basin" else None,
+            "hydrobasins_level": HYDROBASINS_LEVEL if AOI_MODE == "basin" else None,
+            "bbox": AOI_BBOX,
+            "geojson_path": AOI_GEOJSON_PATH,
+            "test_point": [TEST_AOI_POINT_LON, TEST_AOI_POINT_LAT],
+            "test_buffer_m": TEST_AOI_BUFFER_M,
+        },
+    )
+    print("AOI summary:", aoi_summary(aoi).getInfo())
+    if tile_config.enabled:
+        print("Tile grid configuration:", tile_config)
+        print("Tile grid summary:", grid_summary(aoi, grid).getInfo())
+        print(
+            "Tile export cap:",
+            {
+                "max_tiles_to_export": tile_config.max_export_tiles,
+                "max_batch_export_tasks": MAX_BATCH_EXPORT_TASKS,
+            },
+        )
+    else:
+        print("Tiling is disabled. The AOI will be handled as one export region.")
+
+
+def _export_target_root() -> str | None:
+    return EXPORT_IMAGE_COLLECTION or EXPORT_ASSET_ROOT
+
+
+def _export_config_class():
+    from sw_dws1_approach3.exports import ExportConfig
+
+    return ExportConfig(
+        asset_root=_export_target_root(),
+        scale_m=EXPORT_SCALE_M,
+        crs=EXPORT_CRS,
+        max_pixels=EXPORT_MAX_PIXELS,
+    )
+
+
+def _start_exports_for_image(
+    *,
+    image,
+    aoi,
+    grid,
+    tile_config,
+    label: str,
+    bands: list[str],
+    max_tasks: int,
+) -> int:
+    from sw_dws1_approach3.exports import export_image_to_asset
+    from sw_dws1_approach3.tiling import export_regions
+
+    if not START_EXPORT:
+        if tile_config.enabled:
+            print(
+                "START_EXPORT is False. No export tasks were started. "
+                "With tiling enabled, exports would be created per grid tile."
+            )
+        else:
+            print("START_EXPORT is False. No Earth Engine export task was started.")
+        return 0
+
+    regions = export_regions(
+        aoi=aoi,
+        use_tiling=tile_config.enabled,
+        grid=grid,
+        max_tiles=tile_config.max_export_tiles,
+    )
+    export_config = _export_config_class()
+    started = 0
+    for region in regions:
+        if started >= max_tasks:
+            break
+        region_label = label if region.label_suffix == "aoi" else f"{label}_{region.label_suffix}"
+        export_image = image.set(
+            {
+                "approach3_export_region": region.label_suffix,
+                "approach3_tiled_export": tile_config.enabled,
+                "approach3_output_profile": OUTPUT_PROFILE,
+            }
+        )
+        task = export_image_to_asset(
+            image=export_image,
+            region=region.region,
+            label=region_label,
+            config=export_config,
+            bands=bands,
+        )
+        task.start()
+        started += 1
+        print("Started Earth Engine export task:", {"id": task.id, "label": region_label})
+    if started < len(regions):
+        print(f"Started {started} task(s); remaining regions were skipped by the task cap.")
+    return started
+
+
 def main() -> None:
     _add_src_to_path()
 
     import ee
 
+    from sw_dws1_approach3.aoi import AoiConfig, resolve_aoi
+    from sw_dws1_approach3.availability import source_availability_flags
     from sw_dws1_approach3.datasets import DynamicWorldThresholds, dynamic_world_collection
     from sw_dws1_approach3.exports import (
-        ACQUISITION_EXPORT_BANDS,
-        MONTHLY_EXPORT_BANDS,
-        ExportConfig,
-        export_image_to_asset,
+        add_encoded_summary_band,
+        export_bands_for_profile,
     )
     from sw_dws1_approach3.gee_session import initialize_earth_engine
     from sw_dws1_approach3.periods import default_export_label, monthly_windows, validate_date_window
@@ -159,8 +288,8 @@ def main() -> None:
         build_monthly_product,
         candidate_counts,
         first_dynamic_world_image,
-        tanganyika_basin_aoi,
     )
+    from sw_dws1_approach3.tiling import TileGridConfig, build_covering_grid
 
     if EE_PROJECT == "your-google-cloud-project-id":
         raise ValueError(
@@ -168,9 +297,30 @@ def main() -> None:
             "of this script before running it."
         )
     validate_date_window(START_DATE, END_DATE)
+    print("Source availability preflight:", source_availability_flags(START_DATE, END_DATE))
 
     initialize_earth_engine(project=EE_PROJECT)
-    aoi = tanganyika_basin_aoi(HYBAS_ID)
+    aoi_config = AoiConfig(
+        mode=AOI_MODE,
+        hybas_id=HYBAS_ID,
+        hydrobasins_level=HYDROBASINS_LEVEL,
+        bbox=AOI_BBOX,
+        point_lon=TEST_AOI_POINT_LON,
+        point_lat=TEST_AOI_POINT_LAT,
+        point_buffer_m=TEST_AOI_BUFFER_M,
+        geojson_path=AOI_GEOJSON_PATH,
+    )
+    aoi = resolve_aoi(aoi_config)
+    tile_config = TileGridConfig(
+        enabled=USE_TILING,
+        tile_scale_m=TILE_SCALE_M,
+        crs=TILE_CRS,
+        max_preview_tiles=MAX_PREVIEW_TILES,
+        max_export_tiles=MAX_TILES_TO_EXPORT,
+    )
+    grid = build_covering_grid(aoi, tile_config) if tile_config.enabled else None
+    _print_aoi_and_grid_summary(aoi, grid, tile_config)
+
     thresholds = DynamicWorldThresholds(
         water=DW_WATER_THRESHOLD,
         nonwater=DW_NONWATER_THRESHOLD,
@@ -184,20 +334,15 @@ def main() -> None:
     config = ProductConfig(thresholds=thresholds, pairing=pairing)
 
     if PRODUCT_MODE == "monthly_batch":
-        export_config = ExportConfig(
-            asset_root=EXPORT_ASSET_ROOT,
-            scale_m=EXPORT_SCALE_M,
-            crs=EXPORT_CRS,
-            max_pixels=EXPORT_MAX_PIXELS,
-        )
         started = 0
         for window in monthly_windows(START_DATE, END_DATE):
-            export_label = EXPORT_LABEL or default_export_label(
+            default_label = default_export_label(
                 product_mode="monthly",
                 start_date=window.start_date,
                 end_date=window.end_date,
                 hybas_id=HYBAS_ID,
             )
+            export_label = f"{EXPORT_LABEL}_{window.label}" if EXPORT_LABEL else default_label
             counts = candidate_counts(
                 aoi=aoi,
                 start_date=window.start_date,
@@ -221,16 +366,19 @@ def main() -> None:
                     end_date=window.end_date,
                     config=config,
                 )
-                task = export_image_to_asset(
+                image = add_encoded_summary_band(image)
+                started += _start_exports_for_image(
                     image=image,
-                    region=aoi,
+                    aoi=aoi,
+                    grid=grid,
+                    tile_config=tile_config,
                     label=export_label,
-                    config=export_config,
-                    bands=MONTHLY_EXPORT_BANDS,
+                    bands=export_bands_for_profile(
+                        product_mode="monthly",
+                        output_profile=OUTPUT_PROFILE,
+                    ),
+                    max_tasks=MAX_BATCH_EXPORT_TASKS - started,
                 )
-                task.start()
-                started += 1
-                print("Started Earth Engine export task:", task.id)
 
         if START_EXPORT:
             print(f"Started {started} monthly export task(s).")
@@ -268,7 +416,11 @@ def main() -> None:
             end_date=END_DATE,
             config=config,
         )
-        export_bands = MONTHLY_EXPORT_BANDS
+        image = add_encoded_summary_band(image)
+        export_bands = export_bands_for_profile(
+            product_mode="monthly",
+            output_profile=OUTPUT_PROFILE,
+        )
         metadata_keys = [
             "approach3_mode",
             "period_start",
@@ -304,7 +456,11 @@ def main() -> None:
             end_date=END_DATE,
         )
         image = build_acquisition_product(anchor, aoi=aoi, config=config)
-        export_bands = ACQUISITION_EXPORT_BANDS
+        image = add_encoded_summary_band(image)
+        export_bands = export_bands_for_profile(
+            product_mode="acquisition",
+            output_profile=OUTPUT_PROFILE,
+        )
         metadata_keys = [
             "approach3_mode",
             "anchor_date",
@@ -326,24 +482,15 @@ def main() -> None:
     print("Export label:", export_label)
     _print_sample_check(image, SAMPLE_CHECK_BANDS)
 
-    if START_EXPORT:
-        export_config = ExportConfig(
-            asset_root=EXPORT_ASSET_ROOT,
-            scale_m=EXPORT_SCALE_M,
-            crs=EXPORT_CRS,
-            max_pixels=EXPORT_MAX_PIXELS,
-        )
-        task = export_image_to_asset(
-            image=image,
-            region=aoi,
-            label=export_label,
-            config=export_config,
-            bands=export_bands,
-        )
-        task.start()
-        print("Started Earth Engine export task:", task.id)
-    else:
-        print("START_EXPORT is False. No Earth Engine export task was started.")
+    _start_exports_for_image(
+        image=image,
+        aoi=aoi,
+        grid=grid,
+        tile_config=tile_config,
+        label=export_label,
+        bands=export_bands,
+        max_tasks=MAX_TILES_TO_EXPORT if tile_config.enabled else 1,
+    )
 
 
 if __name__ == "__main__":

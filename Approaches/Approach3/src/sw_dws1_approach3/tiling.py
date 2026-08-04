@@ -12,7 +12,7 @@ class TileGridConfig:
     """Client-side tiling settings."""
 
     enabled: bool = False
-    tile_scale_m: int = 50_000
+    tile_scale_m: int = 50000
     crs: str = "EPSG:3857"
     max_preview_tiles: int = 12
     max_export_tiles: int = 1

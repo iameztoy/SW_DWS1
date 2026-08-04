@@ -10,7 +10,9 @@ import ee
 
 
 HYDROBASINS_LEVEL4_COLLECTION = "WWF/HydroSHEDS/v1/Basins/hybas_4"
+HYDROBASINS_COLLECTION_TEMPLATE = "WWF/HydroSHEDS/v1/Basins/hybas_{level}"
 DEFAULT_TANGANYIKA_HYBAS_ID = 1041259950
+DEFAULT_HYDROBASINS_LEVEL = 4
 
 
 @dataclass(frozen=True)
@@ -19,6 +21,7 @@ class AoiConfig:
 
     mode: str = "basin"
     hybas_id: int = DEFAULT_TANGANYIKA_HYBAS_ID
+    hydrobasins_level: int = DEFAULT_HYDROBASINS_LEVEL
     bbox: tuple[float, float, float, float] | None = None
     point_lon: float = 29.75
     point_lat: float = -6.5
@@ -26,20 +29,30 @@ class AoiConfig:
     geojson_path: str | None = None
 
 
+def hydrobasins_collection_id(level: int = DEFAULT_HYDROBASINS_LEVEL) -> str:
+    """Return the Earth Engine HydroBASINS collection ID for a basin level."""
+    if level < 1 or level > 12:
+        raise ValueError("HydroBASINS level must be between 1 and 12.")
+    return HYDROBASINS_COLLECTION_TEMPLATE.format(level=level)
+
+
 def basin_feature_collection(
     hybas_id: int = DEFAULT_TANGANYIKA_HYBAS_ID,
-    collection_id: str = HYDROBASINS_LEVEL4_COLLECTION,
+    level: int = DEFAULT_HYDROBASINS_LEVEL,
+    collection_id: str | None = None,
 ) -> ee.FeatureCollection:
     """Return HydroBASINS features for one HYBAS_ID."""
+    collection_id = collection_id or hydrobasins_collection_id(level)
     return ee.FeatureCollection(collection_id).filter(ee.Filter.eq("HYBAS_ID", hybas_id))
 
 
 def basin_aoi(
     hybas_id: int = DEFAULT_TANGANYIKA_HYBAS_ID,
-    collection_id: str = HYDROBASINS_LEVEL4_COLLECTION,
+    level: int = DEFAULT_HYDROBASINS_LEVEL,
+    collection_id: str | None = None,
 ) -> ee.Geometry:
     """Return the basin geometry used by the JavaScript baseline."""
-    return basin_feature_collection(hybas_id, collection_id).geometry()
+    return basin_feature_collection(hybas_id, level=level, collection_id=collection_id).geometry()
 
 
 def bbox_aoi(west: float, south: float, east: float, north: float) -> ee.Geometry:
@@ -69,7 +82,7 @@ def resolve_aoi(config: AoiConfig, custom_geometry: ee.Geometry | None = None) -
     """Resolve an AOI from configured basin, test geometry, GeoJSON, or drawn geometry."""
     mode = config.mode.strip().lower()
     if mode == "basin":
-        return basin_aoi(config.hybas_id)
+        return basin_aoi(config.hybas_id, level=config.hydrobasins_level)
     if mode == "point_buffer":
         return point_buffer_aoi(config.point_lon, config.point_lat, config.point_buffer_m)
     if mode == "bbox":

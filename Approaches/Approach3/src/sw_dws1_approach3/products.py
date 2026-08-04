@@ -7,7 +7,12 @@ from typing import Callable
 
 import ee
 
-from .aoi import DEFAULT_TANGANYIKA_HYBAS_ID, HYDROBASINS_LEVEL4_COLLECTION, basin_aoi
+from .aoi import (
+    DEFAULT_HYDROBASINS_LEVEL,
+    DEFAULT_TANGANYIKA_HYBAS_ID,
+    HYDROBASINS_LEVEL4_COLLECTION,
+    basin_aoi,
+)
 from .datasets import (
     DynamicWorldThresholds,
     SourceBit,
@@ -33,6 +38,7 @@ MONTHLY_DIAGNOSTIC_BANDS = [
     "open_count",
     "inundated_or_partial_count",
 ]
+OPERA_WTR_BAND = "WTR_Water_classification"
 
 
 @dataclass(frozen=True)
@@ -52,9 +58,12 @@ class ProductConfig:
     pairing: PairingConfig = field(default_factory=PairingConfig)
 
 
-def tanganyika_basin_aoi(hybas_id: int = DEFAULT_TANGANYIKA_HYBAS_ID) -> ee.Geometry:
-    """Return the HydroBASINS level-4 Tanganyika AOI used by the JS baseline."""
-    return basin_aoi(hybas_id)
+def tanganyika_basin_aoi(
+    hybas_id: int = DEFAULT_TANGANYIKA_HYBAS_ID,
+    hydrobasins_level: int = DEFAULT_HYDROBASINS_LEVEL,
+) -> ee.Geometry:
+    """Return the HydroBASINS Tanganyika AOI used by the JS baseline."""
+    return basin_aoi(hybas_id, level=hydrobasins_level)
 
 
 def candidate_counts(
@@ -318,13 +327,16 @@ def aggregate_normalized_monthly(
     nonwater_code: int,
 ) -> ee.Image:
     """Aggregate an OPERA source over a period as water observed at least once."""
-    source_collection = _with_template_image(collection, _empty_opera_observation())
+    source_collection = _with_template_image(
+        ee.ImageCollection(collection.map(lambda image: _opera_wtr_observation(ee.Image(image)))),
+        _empty_opera_observation(),
+    )
     normalized = _with_template_image(
         ee.ImageCollection(collection.map(lambda image: normalizer(ee.Image(image)))),
         empty_normalized_image(),
     )
     obs_count = (
-        source_collection.select("WTR_Water_classification")
+        source_collection.select(OPERA_WTR_BAND)
         .count()
         .unmask(0)
         .rename("obs_count")
@@ -398,8 +410,19 @@ def _empty_dynamic_world_observation() -> ee.Image:
 
 
 def _empty_opera_observation() -> ee.Image:
+    """Return an empty WTR image with the same 0-255 pixel range as OPERA WTR."""
     masked_zero = ee.Image.constant(0).updateMask(ee.Image.constant(0))
-    return masked_zero.rename("WTR_Water_classification").toUint16()
+    return masked_zero.rename(OPERA_WTR_BAND).toByte()
+
+
+def _opera_wtr_observation(image: ee.Image) -> ee.Image:
+    """Return the OPERA WTR band with the same 0-255 range as the empty template."""
+    return (
+        ee.Image(image)
+        .select(OPERA_WTR_BAND)
+        .toByte()
+        .copyProperties(image, image.propertyNames())
+    )
 
 
 def _monthly_selected_date(

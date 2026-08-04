@@ -1,0 +1,753 @@
+CODEX CONTEXT: GEE ANNUAL WATER-DYNAMICS APPLICATION — VERSION 6.9
+==================================================================
+
+
+1. Current baseline
+-------------------
+
+The current working file is:
+
+- DW_water_retrieval_annual_dynamics_tabs_v6_9.js
+- Equivalent text copy: DW_water_retrieval_annual_dynamics_tabs_v6_9.txt
+
+Version 6.9 is based computationally on version 6.8. The processing code from the section Annual-dynamics collection construction onward was intentionally left unchanged when v6.9 was created. Version 6.9 mainly reorganises the user interface into internal tabs.
+
+The script is designed to work either:
+
+1. as a standalone Google Earth Engine application; or
+2. as an Annual water dynamics module appended to a larger existing GEE application.
+
+There is no default analysis AOI. The user must draw a polygon or rectangle before running.
+
+---
+
+
+2. Main objective
+-----------------
+
+The application calculates annual water and inundation dynamics from temporally ordered observations supplied by:
+
+- Google Dynamic World;
+- OPERA DSWx-HLS Landsat;
+- OPERA DSWx-HLS Sentinel-2;
+- OPERA DSWx-S1.
+
+The user can select which water-related classes count as the target class and then calculate annual timing, duration, frequency, episode, data-support, provenance and diagnostic products.
+
+The application must preserve the distinction between:
+
+- selected water classes;
+- unselected water-related classes;
+- valid non-water observations;
+- unusable or excluded observations.
+
+An unselected water-related class must never be treated as dry.
+
+---
+
+
+3. Data sources and class interpretation
+----------------------------------------
+
+
+Dynamic World
+
+Dataset:
+
+ee.ImageCollection('GOOGLE/DYNAMICWORLD/V1')
+
+Relevant label values:
+
+- 0 = water
+- 3 = flooded vegetation
+- 8 = snow and ice
+
+Rules:
+
+- Every unmasked Dynamic World semantic label counts as a valid observation.
+- Label 0 and label 3 are independently selectable target classes.
+- Other semantic labels are valid non-water evidence.
+- Snow and ice is not included as liquid surface water.
+
+
+OPERA DSWx-HLS
+
+Dataset:
+
+ee.ImageCollection('OPERA/DSWX/L3_V1/HLS')
+
+Relevant WTR_Water_classification values:
+
+- 0 = not water — valid non-water
+- 1 = open water — valid water
+- 2 = partial surface water — valid water
+- 252 = snow/ice — excluded
+- 253 = cloud/cloud shadow — excluded
+- 254 = ocean mask — excluded
+
+Class 2 is labelled “partial surface water”. It is not assumed to be vegetated.
+
+
+OPERA DSWx-S1
+
+Dataset:
+
+ee.ImageCollection('OPERA/DSWX/L3_V1/S1')
+
+Relevant WTR_Water_classification values:
+
+- 0 = not water — valid non-water
+- 1 = open water — valid water
+- 3 = inundated vegetation — valid water
+- 250 = HAND mask — excluded
+- 251 = layover/shadow — excluded
+- 254 = ocean mask — excluded
+
+A key decision made during development was that OPERA-S1 class 0 must be treated as a valid non-water observation. Earlier versions sometimes excluded it, but the current logic always uses it as valid dry evidence.
+
+---
+
+
+4. HLS platform metadata correction
+-----------------------------------
+
+HLS Landsat and HLS Sentinel-2 must be separated using SPACECRAFT_NAME, not SENSOR.
+
+Current rules:
+
+SPACECRAFT_NAME starts with "Landsat-"   -> HLS Landsat
+SPACECRAFT_NAME starts with "Sentinel-2" -> HLS Sentinel-2
+
+SENSOR is retained only for metadata QA.
+
+This was necessary because a real metadata audit showed many Sentinel-2 HLS assets incorrectly carrying SENSOR = OLI.
+
+For the 2025 Okavango test AOI, the console returned:
+
+Dynamic World assets: 1932
+HLS Landsat by SPACECRAFT_NAME: 1090
+HLS Sentinel-2 by SPACECRAFT_NAME: 2931
+OPERA-S1 assets: 925
+
+HLS spacecraft histogram:
+
+Landsat-8: 857
+Landsat-9: 233
+Sentinel-2A: 578
+Sentinel-2B: 1278
+Sentinel-2C: 1075
+
+HLS SENSOR | SPACECRAFT_NAME combinations:
+
+MSI | Sentinel-2A: 137
+MSI | Sentinel-2B: 388
+MSI | Sentinel-2C: 293
+OLI | Landsat-8: 857
+OLI | Landsat-9: 233
+OLI | Sentinel-2A: 441
+OLI | Sentinel-2B: 890
+OLI | Sentinel-2C: 782
+
+Therefore, using SENSOR = OLI would incorrectly classify many genuine Sentinel-2 assets as Landsat. This issue is already resolved in v6.9 and must not be reintroduced.
+
+The final system:index platform token and SENSOR remain visible in the optional HLS metadata-verification workflow.
+
+---
+
+
+5. User-selectable water classes
+--------------------------------
+
+The interface supports three presets:
+
+- Open water only
+- Inundated / partial water only
+- All water-related classes
+
+Individual class checkboxes remain editable after choosing a preset.
+
+Source-specific selectable classes are:
+
+
+Dynamic World
+
+- class 0: water
+- class 3: flooded vegetation
+
+
+HLS Landsat and HLS Sentinel-2
+
+- class 1: open water
+- class 2: partial surface water
+
+
+OPERA-S1
+
+- class 1: open water
+- class 3: inundated vegetation
+
+The default preset is open water only.
+
+The metric previously called First observed wet day was renamed to:
+
+First observed selected-water day (DOY)
+
+When all water-related classes are selected, it has approximately the same practical meaning as the old First observed wet day. When only one class group is selected, the new name correctly reflects the narrower target.
+
+---
+
+
+6. Same-day fusion
+------------------
+
+All observations sharing the same UTC calendar date are consolidated so they count as one temporal observation per pixel.
+
+Two fusion modes are available.
+
+
+Recommended mode
+
+Any selected water wins
+
+Rules:
+
+- If any enabled source detects a selected water class, the fused daily observation is selected.
+- Explicit dry evidence is used only if no enabled source reports selected or unselected water.
+- Unselected water remains valid water-related evidence and is not dry.
+- Simultaneous selected-water and dry evidence can be recorded as a conflict.
+- Same-day multiple sources do not inflate observation counts.
+
+
+Priority mode
+
+DW > HLS Landsat > HLS Sentinel-2 > OPERA-S1
+
+This mode uses source priority at each pixel/date.
+
+Priority mode is computationally heavier because lower-priority evidence may be suppressed by a higher-priority observation. Some metric-specific shortcuts valid for the “Any selected water wins” mode cannot be used under priority fusion.
+
+
+Source bit masks
+
+Provenance bit values are:
+
+1 = Dynamic World
+2 = HLS Landsat
+4 = HLS Sentinel-2
+8 = OPERA-S1
+
+Values are additive/bitwise. For example, 9 means Dynamic World plus OPERA-S1.
+
+---
+
+
+7. HLS Sentinel-2 same-day Dynamic World gap fill
+-------------------------------------------------
+
+HLS Sentinel-2 can be enabled with this recommended option:
+
+HLS Sentinel-2 fills only same-day Dynamic World gaps
+
+When enabled, an HLS Sentinel-2 pixel/date contributes only where Dynamic World has no valid pixel on that same UTC date.
+
+This avoids double-counting or unnecessarily duplicating the Sentinel-2 acquisition already represented by Dynamic World, while retaining HLS Sentinel-2 as a gap filler.
+
+The option can be disabled if the user wants all HLS Sentinel-2 observations included.
+
+---
+
+
+8. Why the architecture became metric-specific
+----------------------------------------------
+
+Earlier versions, especially v4.2, could display the first selected-water date quickly because they used a relatively simple daily collection.
+
+Later versions added:
+
+- correct HLS Landsat/Sentinel-2 separation;
+- S1 class 0 validity;
+- more provenance bands;
+- source masks;
+- conflict bands;
+- source-specific counts;
+- raw coverage diagnostics;
+- richer pixel plots.
+
+Passing every simple metric through the complete daily graph caused:
+
+- User memory limit exceeded;
+- Earth Engine capacity exceeded;
+- heterogeneous MaskOnly versus numeric band errors;
+- missing source_bit errors.
+
+A standalone benchmark then proved that the first selected-water DOY could be calculated quickly for the large Okavango AOI with all sources and classes enabled if the calculation used direct source-specific extrema instead of the full daily fusion graph.
+
+The current v6.9 therefore chooses the smallest suitable engine for each metric.
+
+---
+
+
+9. Metric engines in v6.9
+-------------------------
+
+
+9.1 Direct timing engine
+
+Used under Any selected water wins for:
+
+- first selected-water day;
+- last selected-water day;
+- first open-water day;
+- last open-water day;
+- first inundated/partial day;
+- last inundated/partial day;
+- selected/open/partial spans;
+- open-to-inundated/partial lag.
+
+The engine calculates the minimum or maximum selected DOY independently for each enabled source and then combines the source-level images pixelwise.
+
+It does not build the complete daily validity/provenance collection.
+
+This is the approach validated by the successful standalone benchmark and is the reason the timing layers now render quickly.
+
+
+9.2 Lightweight first-dry engine
+
+First dry day after final selected detection is more complex because it requires:
+
+1. the final selected-water DOY; and
+2. the earliest valid dry observation after that date.
+
+Under Any selected water wins, v6.9 uses a dedicated lightweight daily pathway carrying only the evidence required for:
+
+- dry;
+- unselected water;
+- date.
+
+It avoids the full provenance collection.
+
+Unselected water is retained because, for example, a flooded-vegetation observation after the last selected open-water date must not be interpreted as dry.
+
+This optimisation was tested by the user and the timing metrics, including first dry, were reported as working.
+
+
+9.3 Lightweight selected/valid daily engine
+
+Under Any selected water wins, the following products use a daily collection containing only:
+
+selected
+valid
+doy
+
+Products:
+
+- selected-class observation count;
+- selected-class fraction of valid observations;
+- observed selected-class episodes;
+- longest gap-aware selected-class spell;
+- fused valid observation-date count;
+- maximum gap between valid observations.
+
+Same-source overlaps are collapsed to one UTC-date observation before cross-source fusion.
+
+Definitions remain:
+
+selected = at least one enabled source detects a selected class
+valid    = at least one enabled source supplies usable water/non-water evidence
+
+An unselected water observation has:
+
+selected = 0
+valid = 1
+
+It therefore interrupts a selected-class episode, as intended.
+
+
+9.4 Complete daily engine
+
+The richer full daily engine is still required for:
+
+- priority fusion;
+- source-of-first/last detection;
+- source-specific valid-date counts;
+- same-day conflict counts;
+- detailed provenance;
+- raw coverage and exclusion diagnostics;
+- any metric whose exact result depends on source priority.
+
+Do not route simple timing metrics back through this complete engine unless scientifically required.
+
+---
+
+
+10. Metric definitions
+----------------------
+
+
+Timing metrics
+
+- First observed selected-water day
+- Last selected water-class day
+- First dry day after final selected detection
+- First observed open-water day
+- Last observed open-water day
+- First observed inundated/partial day
+- Last observed inundated/partial day
+- Lag from first open water to first inundated/partial detection
+
+Dates are observation-bounded dates, not exact physical transition dates.
+
+
+Duration, frequency and episode metrics
+
+- Observed selected-class span:
+  last selected DOY - first selected DOY + 1
+- Observed open-water span
+- Observed inundated/partial span
+- Selected-class observation count
+- Selected-class fraction of valid observations
+- Observed selected-class episodes
+- Longest gap-aware selected-class spell
+
+Episode continuity is controlled by the user-defined maximum gap, default 20 days.
+
+An episode continues only when:
+
+- the previous valid observation was selected; and
+- the difference to the current selected observation is less than or equal to the maximum gap.
+
+The longest spell is the calendar-day span from the first to the latest selected observation within the continuous episode.
+
+
+Data-support and provenance metrics
+
+- Fused valid observation-date count
+- Dynamic World-supported valid date count
+- HLS Landsat-supported valid date count
+- HLS Sentinel-2-supported valid date count
+- OPERA-S1-supported valid date count
+- Source mask of first selected detection
+- Source mask of last selected detection
+- Maximum interval between valid observations
+- Same-day wet/dry conflict count
+
+The maximum valid gap is the difference between consecutive valid observation DOYs. It does not include the interval from 1 January to the first observation or from the last observation to 31 December.
+
+---
+
+
+11. Raw coverage and exclusion diagnostics
+------------------------------------------
+
+The application includes optional source-specific raw diagnostics.
+
+Examples:
+
+
+Dynamic World
+
+- asset-footprint date count;
+- product-value date count;
+- usable-state date count;
+- excluded/no-value date count.
+
+
+HLS Landsat and HLS Sentinel-2
+
+- asset-footprint date count;
+- product-value date count;
+- usable water-state date count;
+- excluded date count;
+- class 0 not-water date count;
+- class 252 snow/ice date count;
+- class 253 cloud/shadow date count;
+- class 254 ocean-mask date count;
+- masked/no-value date count.
+
+
+OPERA-S1
+
+- asset-footprint date count;
+- product-value date count;
+- usable water-state date count;
+- excluded date count;
+- class 0 not-water date count;
+- class 250 HAND-mask date count;
+- class 251 layover/shadow date count;
+- class 254 ocean-mask date count;
+- masked/no-value date count.
+
+The expected diagnostic identity is approximately:
+
+asset footprint = usable state + excluded state
+
+after same-day consolidation, subject to the exact definitions of the diagnostic bands.
+
+---
+
+
+12. Pixel temporal inspector
+----------------------------
+
+The application contains a floating, hideable pixel inspector.
+
+Available modes include:
+
+- fused state and observation gaps;
+- water-state classification evolution;
+- source availability by date;
+- raw product coverage and exclusion reasons;
+- HLS platform verification.
+
+The classification-evolution plot uses a state model equivalent to:
+
+0 = no valid observation
+1 = dry
+2 = open water
+3 = inundated vegetation / partial surface water
+4 = open and partial detected on the same date
+
+The evolution plot is independent of which classes were selected as annual target classes.
+
+
+Point-local memory design
+
+An earlier implementation rebuilt the full daily graph over the complete AOI when the user clicked one pixel. This caused memory errors.
+
+The current design builds a new local daily graph for every click inside a small buffer around the point:
+
+default local radius = 200 m
+
+This supports inspector scales of approximately:
+
+- 10 m;
+- 30 m;
+- 100 m.
+
+The full-AOI analysis collection is deliberately not reused for the pixel inspector.
+
+This point-local inspector structure exists in v6.9, although the latest user feedback focused mainly on annual layers rather than a complete revalidation of every inspector mode after the change.
+
+---
+
+
+13. Map-layer and legend behaviour
+----------------------------------
+
+Every checked metric is registered as a separate ui.Map.Layer.
+
+- The first checked metric is visible initially.
+- Remaining selected products are added to the Earth Engine Layers panel but are hidden.
+- The user can enable them manually from the Layers panel.
+- A generated-product selector can show one selected product and hide the other generated layers.
+- The floating legend selector is synchronized with the selected product.
+- Users can still manually show several layers simultaneously.
+
+This restored the working v4.2 behaviour after intermediate versions accidentally kept replacing a single map layer.
+
+A minor code-comment/metadata inconsistency remains: some status text and image metadata still say products are “loaded one at a time” or map_preview_layers_created: 1, while the actual v6.9 implementation registers all checked products as separate hidden/visible Layers-panel entries. This does not affect calculations but could be cleaned up.
+
+---
+
+
+14. Export behaviour
+--------------------
+
+The Export module creates tasks for the selected annual metric stack.
+
+Supported targets:
+
+- Google Drive
+- Earth Engine Asset ImageCollection
+
+The export settings include:
+
+- Drive folder;
+- asset collection path;
+- output scale.
+
+The script deliberately does not use the original generic exportImage() helper because that helper casts outputs to Byte. Annual dynamics require mixed output types:
+
+- DOY and duration products need integer ranges beyond Byte;
+- counts need appropriate integer types;
+- fractions need floating-point output.
+
+The selected output bands are stacked into lastDynamicsImage after a run.
+
+Exports have a better chance of succeeding for large AOIs than interactive map tiles, but the full large-AOI export of all heavy metrics has not yet been comprehensively confirmed.
+
+---
+
+
+15. Version 6.9 UI organisation
+-------------------------------
+
+Version 6.9 reorganises the application into three fixed internal tabs/views:
+
+
+Analysis
+
+Contains:
+
+- AOI controls;
+- class presets and individual class selection;
+- source selection;
+- same-day fusion;
+- year and maximum episode-gap settings;
+- timing metric checkboxes;
+- duration/frequency/episode metric checkboxes;
+- support/provenance/diagnostic metric checkboxes;
+- Run button.
+
+
+Visualization
+
+Contains:
+
+- generated-product selector;
+- map-layer visibility controls;
+- floating legend controls;
+- pixel temporal inspector.
+
+
+Export
+
+Contains:
+
+- export target;
+- Drive folder;
+- Earth Engine Asset ImageCollection path;
+- export scale;
+- export-task button.
+
+The architecture follows the fixed-panel pattern used in LandSenView_v2.js:
+
+- every panel is created once;
+- every panel remains attached to the application;
+- tab buttons call dynSetUiView();
+- switching tabs changes only the panel shown property;
+- widgets are not cleared, moved or re-parented.
+
+Current registry:
+
+var DYN_UI_VIEWS = [
+  'Analysis',
+  'Visualization',
+  'Export'
+];
+
+var dynUiViewPanels = {
+  Analysis: dynamicsAnalysisPanel,
+  Visualization: dynamicsVisualizationPanel,
+  Export: dynamicsExportPanel
+};
+
+Future tabs should follow this pattern: create a fixed panel, add its name to DYN_UI_VIEWS, and register it in dynUiViewPanels.
+
+---
+
+
+16. Testing status reported by the user
+---------------------------------------
+
+
+Confirmed working over the large Okavango AOI
+
+The user reported that the timing products were working after the metric-specific optimisations, including the previously problematic first-dry product.
+
+The span products also worked.
+
+The direct first-selected-water benchmark worked quickly with:
+
+year: 2025
+use DW: true
+use HLS Landsat: true
+use HLS Sentinel-2: true
+use OPERA-S1: true
+selected open water: true
+selected flooded/partial: true
+HLS Sentinel-2 same-day DW gap fill: true
+
+
+Works for a smaller AOI but still fails interactively for the full Okavango Delta and Panhandle
+
+The user reported interactive User memory limit exceeded errors for:
+
+- Selected-class observation count
+- Selected-class fraction of valid observations
+- Observed selected-class episodes
+- Longest gap-aware selected-class spell
+
+These four products work over a smaller AOI.
+
+Therefore:
+
+- their logic and band schema appear valid;
+- the remaining issue is AOI-scale interactive memory;
+- this is not currently interpreted as a scientific or type error.
+
+The current lightweight selected/valid daily engine still has to consolidate thousands of source assets and distinct dates over the full AOI.
+
+Potential future work includes:
+
+- exact monthly/blockwise count aggregation;
+- a state-carrying monthly/blockwise sequence engine for episodes and longest spell;
+- current-map-extent preview;
+- full-AOI batch export followed by visualisation of the exported asset.
+
+Do not silently change the metric definitions while optimising them.
+
+---
+
+
+17. Important regressions to avoid
+----------------------------------
+
+Do not:
+
+1. Use SENSOR to separate HLS Landsat and Sentinel-2.
+2. Exclude HLS or S1 class 0 from valid non-water evidence.
+3. Treat an unselected water class as dry.
+4. Count multiple same-day source observations as separate temporal observations.
+5. Route simple first/last timing metrics through the complete daily provenance graph.
+6. Rebuild the full AOI graph merely to inspect one clicked pixel.
+7. Reintroduce fully masked heterogeneous placeholders that can create MaskOnly versus numeric band errors.
+8. Drop or rename source_bit before a function that expects raw source-level observations.
+9. Preload a default AOI.
+10. Re-parent UI widgets when changing tabs.
+11. Cast the mixed annual output stack to Byte during export.
+12. Remove later features—legends, plots, metadata QA and diagnostics—while making the metric core lighter.
+
+---
+
+
+18. Suggested Codex priorities
+------------------------------
+
+1. Treat v6.9 as the current baseline.
+2. First verify that the tab-only reorganisation has not changed runtime behaviour compared with v6.8.
+3. Clean up the outdated status/metadata text concerning one-at-a-time layers.
+4. Test the Export tab using:
+   - one light timing product;
+   - selected-class count;
+   - selected fraction;
+   - episodes;
+   - longest spell;
+   - both Drive and Asset targets if relevant.
+5. Optimise the four large-AOI failing metrics without changing their definitions.
+6. Keep the metric-specific architecture.
+7. Add future UI modules only through the fixed-panel view registry.
+8. Preserve exact HLS metadata, class validity and same-day fusion decisions.
+
+---
+
+
+19. Current file validation
+---------------------------
+
+For v6.9:
+
+- JavaScript syntax was checked with node --check.
+- The JS and TXT copies were identical.
+- The computational tail was compared with v6.8 and intentionally retained unchanged.
+- Earth Engine server-side execution cannot be validated outside the Code Editor; runtime status is based on the user tests described above.
