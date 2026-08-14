@@ -86,7 +86,7 @@ var CHIRPS_PROFILE_SCALE_METERS = 5566;
 // Default time range
 //--------------------------------------------------------------
 var DEFAULT_START_DATE = '2022-01-01';
-var DEFAULT_END_DATE = '2025-12-31';
+var DEFAULT_END_DATE = '2026-12-31';
 
 
 //--------------------------------------------------------------
