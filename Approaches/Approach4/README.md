@@ -28,6 +28,13 @@ The application remains separate from the synchronized production/inspector
 version sequence. Annual versions v6.8 and v6.9 are retained under
 `scripts/legacy/`.
 
+`scripts/DW_water_retrieval_annual_dynamics_visualizer_v1_0_0.js` is the
+standalone companion for exported multiband annual-dynamics images. It
+discovers all bands at run time, applies the matching timing, duration,
+fraction, count, episode, or source palette, and provides a documented generic
+fallback for unfamiliar future bands. Its default asset is the November 2024
+to October 2025 Okavango test export.
+
 The imported contexts are preserved under `docs/`. See
 `docs/alignment_v1_5_0.md` for the comparison, alignment decisions, and
 compatibility changes introduced in v1.5.0. The untouched paired v1.4.0 scripts
@@ -80,6 +87,7 @@ Approaches/Approach4/
 └─ scripts/
    ├─ DW_OPERA_fusion_process_inspector_v1_5_0.js
    ├─ DW_OPERA_hierarchical_fusion_v1_5_0.js
+   ├─ DW_water_retrieval_annual_dynamics_visualizer_v1_0_0.js
    ├─ DW_water_retrieval_annual_dynamics_tabs_v6_10.js
    └─ legacy/
       ├─ DW_OPERA_fusion_process_inspector_v1_4_0.txt
