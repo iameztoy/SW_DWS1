@@ -1,14 +1,13 @@
-/**** Hydrological-period water-dynamics metric-specific lightweight application v6.9 ****/
-/**** Standalone GEE app or hydrological-period dynamics tab appended to DW_water_retrieval.js. ****/
+/**** Annual water-dynamics metric-specific lightweight application v6.8 ****/
+/**** Standalone GEE app or annual-dynamics tab appended to DW_water_retrieval.js. ****/
 /**** Lean v4.2-derived metric core with platform-correct HLS separation, valid class-0 support, dynamic legends, on-demand pixel inspection, and separate raw diagnostics. ****/
 /**** All checked metrics are added to the Layers panel; only the first is shown initially and the others remain hidden until enabled. ****/
 
 /*
 Purpose
 -------
-Calculate timing, duration, recurrence, support and provenance metrics for a
-user-selected full-month analysis period (including cross-calendar hydrological
-years) using temporally ordered observations
+Calculate annual timing, duration, recurrence, support and provenance metrics
+for user-selected surface-water classes using temporally ordered observations
 from Dynamic World, OPERA DSWx-HLS and OPERA DSWx-S1.
 
 Recommended source configuration
@@ -178,7 +177,7 @@ var DYN_DAILY_BAND_ORDER = DYN_RAW_BAND_ORDER.concat([
   'valid_source_mask',
   'valid_source_count',
   'conflict',
-  'analysis_day'
+  'doy'
 ]);
 
 var DYN_DAILY_BAND_TYPES = {
@@ -196,7 +195,7 @@ var DYN_DAILY_BAND_TYPES = {
   valid_source_mask: 'uint8',
   valid_source_count: 'uint8',
   conflict: 'uint8',
-  analysis_day: 'int16'
+  doy: 'int16'
 };
 
 // The map/export metric core carries only bands needed by annual metrics.
@@ -210,7 +209,7 @@ var DYN_METRIC_BAND_ORDER = [
   'selected_source_mask',
   'valid_source_mask',
   'conflict',
-  'analysis_day'
+  'doy'
 ];
 
 var DYN_METRIC_BAND_TYPES = {
@@ -222,7 +221,7 @@ var DYN_METRIC_BAND_TYPES = {
   selected_source_mask: 'uint8',
   valid_source_mask: 'uint8',
   conflict: 'uint8',
-  analysis_day: 'int16'
+  doy: 'int16'
 };
 
 // Raw-source diagnostics are deliberately separate from the fused daily
@@ -292,8 +291,7 @@ var lastDynamicsName = null;
 var lastDynamicsBands = [];
 var lastDynamicsAoi = null;
 var lastDynamicsObservations = null;
-var lastDynamicsYear = null; // Stores the selected period display label for backward-compatible UI naming.
-var lastDynamicsPeriodFileLabel = null;
+var lastDynamicsYear = null;
 var lastDynamicsRawHls = null;
 var lastDynamicsRawDw = null;
 var lastDynamicsSourceOptions = null;
@@ -356,7 +354,7 @@ function dynSetBusy(isBusy, message) {
   if (typeof runDynamicsButton !== 'undefined') {
     runDynamicsButton.setDisabled(isBusy);
     runDynamicsButton.setLabel(
-      isBusy ? 'Calculating hydrological-period dynamics…' : 'Run selected hydrological-period dynamics'
+      isBusy ? 'Calculating annual dynamics…' : 'Run selected annual dynamics'
     );
   }
 
@@ -419,7 +417,7 @@ function dynStartDrawing(shape) {
   tools.draw();
 
   dynSetStatus(
-    'Draw the ' + shape + ' on the map, then run the selected-period analysis.'
+    'Draw the ' + shape + ' on the map, then run the annual analysis.'
   );
 }
 
@@ -484,51 +482,13 @@ function dynRemoveTrailingSlash(text) {
   return text;
 }
 
-var DYN_ANALYSIS_DAY_VIS = {
+var DYN_DOY_VIS = {
   min: 1,
   max: 366,
   palette: [
     '440154', '3B528B', '21918C', '5EC962', 'FDE725'
   ]
 };
-
-// Timing-preview options. Timing metrics are now expressed as analysis-day
-// numbers: day 1 is the first day of the user-selected period. This avoids the
-// calendar-DOY wrap that would otherwise make January appear earlier than the
-// preceding November in a hydrological year.
-var DYN_TIMING_VIS_SPLIT = 'Two half-period ramps (recommended)';
-var DYN_TIMING_VIS_MULTIHUE = 'Enhanced multi-hue continuous ramp';
-var DYN_TIMING_VIS_VIRIDIS = 'Original Viridis continuous ramp';
-
-var DYN_TIMING_FIRST_HALF_PALETTE = [
-  '3F007D', '54278F', '2C7FB8', '41B6C4', '2CA25F', '99D8C9'
-];
-var DYN_TIMING_SECOND_HALF_PALETTE = [
-  '8E0152', 'C51B7D', 'E34A33', 'FC8D59', 'FDBB84', 'FDD49E'
-];
-var DYN_TIMING_MULTIHUE_PALETTE = [
-  '30123B', '4145AB', '4675ED', '39A2FC', '1BCFD4',
-  '24ECA6', '61FC6C', 'A4FC3C', 'D1E834', 'F3C63A',
-  'FE9B2D', 'F36315', 'D93806', 'A91501', '7A0403'
-];
-
-function dynTimingContinuousVis(periodDays, palette) {
-  return {
-    min: 1,
-    max: periodDays,
-    palette: palette
-  };
-}
-
-function dynAnalysisDayNumber(date, periodStart) {
-  // system:time_start is UTC. Flooring the day difference removes acquisition
-  // time-of-day while preserving the correct calendar order across New Year.
-  return ee.Date(date)
-    .difference(ee.Date(periodStart), 'day')
-    .floor()
-    .add(1)
-    .toInt();
-}
 
 var DYN_DURATION_VIS = {
   min: 0,
@@ -1088,7 +1048,7 @@ function dynRenderCoverageDiagnostics() {
 
   var requestToken = ++dynInspectorRequestToken;
   dynInspectorChartPanel.add(ui.Label({
-    value: 'Reading selected-period coverage and exclusion counts…',
+    value: 'Reading annual coverage and exclusion counts…',
     style: {color: '#555555', margin: '6px 0'}
   }));
 
@@ -1119,7 +1079,7 @@ function dynRenderCoverageDiagnostics() {
     var excluded = Number(result.excluded_state || 0);
 
     dynInspectorChartPanel.add(ui.Label({
-      value: source + ' selected-period dates at this pixel — asset footprint: ' +
+      value: source + ' annual dates at this pixel — asset footprint: ' +
         footprint + ' | product value: ' + product +
         ' | usable water state: ' + usable +
         ' | excluded/unusable: ' + excluded,
@@ -1187,7 +1147,7 @@ function dynBuildHlsVerificationFeatures(point, scale) {
   var dwRows = ee.FeatureCollection(dwList.map(function(item) {
     var image = ee.Image(item);
     var dateKey = ee.Date(image.get('system:time_start'))
-      .format('yyyy-MM-dd');
+      .format('YYYY-MM-dd');
     var rawValue = image.select('label').reduceRegion({
       reducer: ee.Reducer.first(),
       geometry: point,
@@ -1224,7 +1184,7 @@ function dynBuildHlsVerificationFeatures(point, scale) {
   return ee.FeatureCollection(hlsList.map(function(item) {
     var image = ee.Image(item);
     var date = ee.Date(image.get('system:time_start'));
-    var dateKey = date.format('yyyy-MM-dd');
+    var dateKey = date.format('YYYY-MM-dd');
     var group = ee.String(image.get('dyn_hls_platform_group'));
     var rawValue = image.select('WTR_Water_classification').reduceRegion({
       reducer: ee.Reducer.first(),
@@ -1277,7 +1237,7 @@ function dynBuildHlsVerificationFeatures(point, scale) {
 
     return ee.Feature(null, {
       sort_millis: date.millis(),
-      date_time_utc: date.format('yyyy-MM-dd HH:mm'),
+      date_time_utc: date.format('YYYY-MM-dd HH:mm'),
       date_key: dateKey,
       sensor: image.get('SENSOR'),
       spacecraft: image.get('SPACECRAFT_NAME'),
@@ -1531,9 +1491,9 @@ function dynRenderHlsVerification() {
         }
         Export.table.toDrive({
           collection: dynLastHlsVerificationFeatures,
-          description: 'HLS_platform_verification_' + lastDynamicsPeriodFileLabel,
+          description: 'HLS_platform_verification_' + lastDynamicsYear,
           folder: dynamicsDriveFolder.getValue(),
-          fileNamePrefix: 'HLS_platform_verification_' + lastDynamicsPeriodFileLabel,
+          fileNamePrefix: 'HLS_platform_verification_' + lastDynamicsYear,
           fileFormat: 'CSV'
         });
         dynSetStatus(
@@ -1640,8 +1600,7 @@ function dynEnsureLazyInspectorData(point) {
 
   var annual = buildAnnualDynamicsCollection(
     inspectorAoi,
-    cfg.start,
-    cfg.end,
+    cfg.year,
     cfg.sourceOptions,
     cfg.classOptions
   );
@@ -1842,7 +1801,7 @@ function dynRenderInspectorChart() {
     dynInspectorPoint === null
   ) {
     dynInspectorChartPanel.add(ui.Label(
-      'Run the selected-period analysis, enable the inspector and click a pixel.'
+      'Run the annual analysis, enable the inspector and click a pixel.'
     ));
     return;
   }
@@ -1891,7 +1850,7 @@ function dynInspectCoordinates(coords) {
 
   if (!dynEnsureLazyInspectorData(dynInspectorPoint)) {
     dynSetStatus(
-      'Run the hydrological-period dynamics before using the pixel time-series inspector.'
+      'Run the annual dynamics before using the pixel time-series inspector.'
     );
     return;
   }
@@ -1900,7 +1859,7 @@ function dynInspectCoordinates(coords) {
 
   dynBuildInspectorPanel();
   dynInspectorInfoLabel.setValue(
-    'Period ' + lastDynamicsYear + ' | lon ' + coords.lon.toFixed(5) +
+    'Year ' + lastDynamicsYear + ' | lon ' + coords.lon.toFixed(5) +
     ', lat ' + coords.lat.toFixed(5) +
     '. The chart is computed from a small local buffer around this point; ' +
     'each x-position is an actual enabled-source acquisition date.'
@@ -1929,7 +1888,7 @@ function dynUpdateInspectorHelp() {
     message = 'The stepped profile shows the sequence of observed classes: ' +
       'dry/non-water, open water and flooded-vegetation/partial-water states. It uses all ' +
       'water-related classes from the enabled sources, even when one class ' +
-      'was not selected as a target for this period. The connecting steps are a ' +
+      'was not selected as an annual target. The connecting steps are a ' +
       'visual guide between observations, not proof that the state persisted ' +
       'through an unobserved interval.';
   } else if (mode === DYN_INSPECTOR_SOURCE_MODE) {
@@ -2244,43 +2203,25 @@ function dynMakeTickPanel(labels) {
   });
 }
 
-function dynFormatUtcDate(millis) {
-  var date = new Date(millis);
-  var months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-  ];
-
-  return date.getUTCDate() + ' ' + months[date.getUTCMonth()] + ' ' +
-    date.getUTCFullYear();
+function dynDoyFromDate(year, monthIndex, day) {
+  var start = Date.UTC(year, 0, 0);
+  var current = Date.UTC(year, monthIndex, day);
+  return Math.floor((current - start) / 86400000);
 }
 
-function dynPeriodDayDateMillis(entry, analysisDay) {
-  return entry.periodStartMillis + (analysisDay - 1) * 86400000;
-}
-
-function dynAnalysisDayTick(entry, fraction) {
-  var day = 1 + Math.round((entry.periodDays - 1) * fraction);
-  return dynFormatUtcDate(dynPeriodDayDateMillis(entry, day)) +
-    '\nday ' + day;
-}
-
-function dynContinuousLegendSpec(type, entry) {
-  if (type === 'ANALYSIS_DAY') {
-    var palette = entry.timingVisMode === DYN_TIMING_VIS_MULTIHUE ?
-      DYN_TIMING_MULTIHUE_PALETTE : DYN_ANALYSIS_DAY_VIS.palette;
-
+function dynContinuousLegendSpec(type, year) {
+  if (type === 'DOY') {
     return {
-      palette: palette,
+      palette: DYN_DOY_VIS.palette,
       ticks: [
-        dynAnalysisDayTick(entry, 0),
-        dynAnalysisDayTick(entry, 0.25),
-        dynAnalysisDayTick(entry, 0.50),
-        dynAnalysisDayTick(entry, 0.75),
-        dynAnalysisDayTick(entry, 1)
+        '1 Jan\nDOY 1',
+        '1 Apr\nDOY ' + dynDoyFromDate(year, 3, 1),
+        '1 Jul\nDOY ' + dynDoyFromDate(year, 6, 1),
+        '1 Oct\nDOY ' + dynDoyFromDate(year, 9, 1),
+        '31 Dec\nDOY ' + dynDoyFromDate(year, 11, 31)
       ],
-      description: 'Timing within the selected analysis period. Day 1 is the first selected date.',
-      note: 'The exported value is the ordinal analysis day, not calendar DOY. This keeps timing ordered correctly across calendar years.'
+      description: 'Day of year: purple indicates earlier dates and yellow later dates.',
+      note: 'DOY is the ordinal calendar day. The displayed dates follow the selected analysis year.'
     };
   }
 
@@ -2289,7 +2230,7 @@ function dynContinuousLegendSpec(type, entry) {
       palette: DYN_DURATION_VIS.palette,
       ticks: ['0', '92', '183', '275', '366'],
       description: 'Duration or temporal gap in days: pale colours are shorter and dark blue is longer.',
-      note: 'The legend uses the standard 0–366 day display stretch; exported values are not truncated.'
+      note: 'The legend is a fixed annual display stretch from 0 to 366 days.'
     };
   }
 
@@ -2317,63 +2258,6 @@ function dynContinuousLegendSpec(type, entry) {
     description: 'Number of fused daily observations satisfying the metric.',
     note: 'The map display saturates at 40. Exported pixel values are not truncated.'
   };
-}
-
-function dynRenderSplitTimingLegend(entry) {
-  var splitDay = entry.firstHalfEndDay;
-  var secondStart = Math.min(entry.periodDays, splitDay + 1);
-
-  dynLegendContentPanel.add(ui.Label(
-    'The selected period is shown with two independent colour ramps so each half uses the full visual contrast.'
-  ));
-
-  dynLegendContentPanel.add(ui.Label({
-    value: 'First half: ' +
-      dynFormatUtcDate(entry.periodStartMillis) + ' – ' +
-      dynFormatUtcDate(dynPeriodDayDateMillis(entry, splitDay)),
-    style: {fontWeight: 'bold', margin: '5px 0 0 0'}
-  }));
-  dynLegendContentPanel.add(dynMakeContinuousBar(
-    DYN_TIMING_FIRST_HALF_PALETTE
-  ));
-  dynLegendContentPanel.add(dynMakeTickPanel([
-    dynFormatUtcDate(entry.periodStartMillis) + '\nday 1',
-    dynFormatUtcDate(dynPeriodDayDateMillis(
-      entry,
-      1 + Math.floor((splitDay - 1) / 2)
-    )),
-    dynFormatUtcDate(dynPeriodDayDateMillis(entry, splitDay)) +
-      '\nday ' + splitDay
-  ]));
-
-  dynLegendContentPanel.add(ui.Label({
-    value: 'Second half: ' +
-      dynFormatUtcDate(dynPeriodDayDateMillis(entry, secondStart)) + ' – ' +
-      dynFormatUtcDate(dynPeriodDayDateMillis(entry, entry.periodDays)),
-    style: {fontWeight: 'bold', margin: '5px 0 0 0'}
-  }));
-  dynLegendContentPanel.add(ui.Label({
-    value: ' ',
-    style: {margin: '0', padding: '0'}
-  }));
-  dynLegendContentPanel.add(dynMakeContinuousBar(
-    DYN_TIMING_SECOND_HALF_PALETTE
-  ));
-  dynLegendContentPanel.add(dynMakeTickPanel([
-    dynFormatUtcDate(dynPeriodDayDateMillis(entry, secondStart)) +
-      '\nday ' + secondStart,
-    dynFormatUtcDate(dynPeriodDayDateMillis(
-      entry,
-      secondStart + Math.floor((entry.periodDays - secondStart) / 2)
-    )),
-    dynFormatUtcDate(dynPeriodDayDateMillis(entry, entry.periodDays)) +
-      '\nday ' + entry.periodDays
-  ]));
-
-  dynLegendContentPanel.add(ui.Label({
-    value: 'The colour discontinuity at the midpoint is intentional. Compare colours within each half; use the date labels to compare across halves.',
-    style: {fontSize: '10px', color: '#555555', margin: '3px 0 0 0'}
-  }));
 }
 
 function dynSourceCombinationName(value) {
@@ -2457,12 +2341,7 @@ function dynRenderLegend(metricLabel) {
     return;
   }
 
-  if (entry.type === 'ANALYSIS_DAY_SPLIT') {
-    dynRenderSplitTimingLegend(entry);
-    return;
-  }
-
-  var spec = dynContinuousLegendSpec(entry.type, entry);
+  var spec = dynContinuousLegendSpec(entry.type, entry.year);
   dynLegendContentPanel.add(ui.Label(spec.description));
   dynLegendContentPanel.add(dynMakeContinuousBar(spec.palette));
   dynLegendContentPanel.add(dynMakeTickPanel(spec.ticks));
@@ -2575,98 +2454,6 @@ function dynHideAllPreviewLayersExcept(metricLabel) {
   });
 }
 
-function dynConfigureFirstSelectedTimingPreview(entry, mode) {
-  if (!entry || !entry.image || !entry.periodDays) {
-    return entry;
-  }
-
-  entry.timingVisMode = mode;
-
-  if (mode === DYN_TIMING_VIS_SPLIT) {
-    var splitDay = entry.firstHalfEndDay;
-    var raw = ee.Image(entry.image);
-
-    var firstHalfRgb = raw
-      .updateMask(raw.lte(splitDay))
-      .visualize({
-        min: 1,
-        max: splitDay,
-        palette: DYN_TIMING_FIRST_HALF_PALETTE
-      });
-
-    var secondHalfRgb = raw
-      .updateMask(raw.gt(splitDay))
-      .visualize({
-        min: splitDay + 1,
-        max: entry.periodDays,
-        palette: DYN_TIMING_SECOND_HALF_PALETTE
-      });
-
-    entry.previewImage = ee.ImageCollection([
-      firstHalfRgb,
-      secondHalfRgb
-    ]).mosaic();
-    entry.previewVis = {};
-    entry.type = 'ANALYSIS_DAY_SPLIT';
-    return entry;
-  }
-
-  entry.previewImage = entry.image;
-  entry.previewVis = dynTimingContinuousVis(
-    entry.periodDays,
-    mode === DYN_TIMING_VIS_MULTIHUE ?
-      DYN_TIMING_MULTIHUE_PALETTE : DYN_ANALYSIS_DAY_VIS.palette
-  );
-  entry.type = 'ANALYSIS_DAY';
-  return entry;
-}
-
-function dynRefreshFirstSelectedTimingPreview() {
-  if (typeof dynamicsFirstSelectedTimingVis === 'undefined' ||
-      dynamicsFirstSelectedTimingVis === null) {
-    return;
-  }
-
-  var mode = dynamicsFirstSelectedTimingVis.getValue();
-  var targetLabel = null;
-
-  dynPreviewProductOrder.some(function(label) {
-    var candidate = dynPreviewProducts[label];
-    if (candidate && candidate.isFirstSelectedTiming) {
-      targetLabel = label;
-      return true;
-    }
-    return false;
-  });
-
-  if (targetLabel === null) {
-    return;
-  }
-
-  var entry = dynPreviewProducts[targetLabel];
-  dynConfigureFirstSelectedTimingPreview(entry, mode);
-
-  var layer = dynPreviewLayers[targetLabel];
-  if (layer) {
-    layer.setEeObject(entry.previewImage || entry.image);
-    layer.setVisParams(entry.previewVis || entry.vis);
-  }
-
-  dynLegendMetricSpecs[targetLabel] = entry;
-
-  if (
-    dynamicsLegendMetricSelect !== null &&
-    dynamicsLegendMetricSelect.getValue() === targetLabel
-  ) {
-    dynRenderLegend(targetLabel);
-  }
-
-  dynSetStatus(
-    'Updated the first-observation timing preview to: ' + mode +
-    '. The exported metric values are unchanged.'
-  );
-}
-
 function dynRegisterPreviewProducts(entries) {
   dynPreviewProducts = {};
   dynPreviewProductOrder = [];
@@ -2681,8 +2468,8 @@ function dynRegisterPreviewProducts(entries) {
     // visible initially. Hidden ui.Map.Layer objects are not requested until
     // the user turns them on, reproducing the working v4.2 behaviour.
     var layer = ui.Map.Layer(
-      entry.previewImage || entry.image,
-      entry.previewVis || entry.vis,
+      entry.image,
+      entry.vis,
       entry.label,
       index === 0,
       1
@@ -2769,7 +2556,7 @@ function dynLoadSelectedPreviewProduct() {
 }
 
 // ------------------------------------------------------
-// Hydrological-period dynamics UI
+// Annual-dynamics UI
 // ------------------------------------------------------
 
 // Outer application panel. The three module panels are added once and are
@@ -2828,7 +2615,7 @@ function dynCreateUiViewButton(viewName) {
 }
 
 dynamicsPanel.add(ui.Label({
-  value: 'Hydrological-period water and inundation dynamics',
+  value: 'Annual water and inundation dynamics',
   style: {
     fontWeight: 'bold',
     margin: '8px 0 4px 0'
@@ -2837,8 +2624,7 @@ dynamicsPanel.add(ui.Label({
 
 dynamicsPanel.add(ui.Label(
   'Configure and run the analysis, inspect generated products, and create ' +
-  'exports from separate tabs. Water-class fusion is unchanged; timing is ' +
-  'referenced to the selected period so cross-calendar hydrological years are valid.'
+  'exports from separate tabs. The processing methods are unchanged.'
 ));
 
 dynProgressLabel = ui.Label({
@@ -2879,7 +2665,7 @@ dynamicsAnalysisPanel.add(ui.Label({
   style: {fontWeight: 'bold', fontSize: '14px', margin: '2px 0 4px 0'}
 }));
 dynamicsAnalysisPanel.add(ui.Label(
-  'Choose the AOI, classes, sources, hydrological period and output metrics, then run the analysis.'
+  'Choose the AOI, classes, sources, year and output metrics, then run the analysis.'
 ));
 
 dynamicsAnalysisPanel.add(ui.Label({
@@ -3140,44 +2926,21 @@ function dynHasPartialClass(sourceOptions, classOptions) {
 dynamicsClassPreset.onChange(applyDynamicsClassPreset);
 
 // ------------------------------------------------------
-// Hydrological analysis period and episode definition
+// Analysis year and episode definition
 // ------------------------------------------------------
 
-var DYN_MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'
-];
-
 dynamicsAnalysisPanel.add(ui.Label({
-  value: '3. Hydrological period and episode settings',
+  value: '3. Year and episode settings',
   style: {
     fontWeight: 'bold',
     margin: '10px 0 3px 0'
   }
 }));
 
-var dynamicsStartMonthSelect = ui.Select({
-  items: DYN_MONTH_NAMES,
-  value: 'November',
-  style: {width: '115px'}
-});
-
-var dynamicsStartYearBox = ui.Textbox({
-  placeholder: 'YYYY',
-  value: '2024',
-  style: {width: '70px'}
-});
-
-var dynamicsEndMonthSelect = ui.Select({
-  items: DYN_MONTH_NAMES,
-  value: 'October',
-  style: {width: '115px'}
-});
-
-var dynamicsEndYearBox = ui.Textbox({
+var dynamicsYearBox = ui.Textbox({
   placeholder: 'YYYY',
   value: '2025',
-  style: {width: '70px'}
+  style: {width: '80px'}
 });
 
 var dynamicsMaxGapBox = ui.Textbox({
@@ -3186,105 +2949,12 @@ var dynamicsMaxGapBox = ui.Textbox({
   style: {width: '70px'}
 });
 
-function dynMonthNumber(monthName) {
-  return DYN_MONTH_NAMES.indexOf(monthName) + 1;
-}
-
-function dynReadPeriodConfig() {
-  var startMonth = dynMonthNumber(dynamicsStartMonthSelect.getValue());
-  var endMonth = dynMonthNumber(dynamicsEndMonthSelect.getValue());
-  var startYear = Number(dynamicsStartYearBox.getValue());
-  var endYear = Number(dynamicsEndYearBox.getValue());
-
-  if (
-    !startMonth || !endMonth || !startYear || !endYear ||
-    startYear < 2015 || endYear < 2015 ||
-    startYear > 2100 || endYear > 2100
-  ) {
-    return {error: 'Enter valid start/end months and years (2015–2100).'};
-  }
-
-  var startMillis = Date.UTC(startYear, startMonth - 1, 1);
-  // End month is inclusive, so the Earth Engine end date is the first day of
-  // the following month because filterDate() uses an exclusive upper bound.
-  var endExclusiveMillis = Date.UTC(endYear, endMonth, 1);
-  var periodDays = Math.round(
-    (endExclusiveMillis - startMillis) / 86400000
-  );
-  var periodMonths = (endYear - startYear) * 12 +
-    (endMonth - startMonth) + 1;
-
-  if (periodDays <= 0 || periodMonths <= 0) {
-    return {error: 'The end month must be after the start month.'};
-  }
-
-  // The metric set is designed for one hydrological year. Shorter full-month
-  // windows are allowed for testing, but windows longer than 12 months are
-  // rejected so duration/count legends and annual interpretation remain clear.
-  if (periodMonths > 12) {
-    return {error: 'Select at most 12 full calendar months for one hydrological year.'};
-  }
-
-  var firstHalfMonths = periodMonths >= 2 ? Math.ceil(periodMonths / 2) : 0;
-  var splitMillis = firstHalfMonths > 0 ?
-    Date.UTC(startYear, startMonth - 1 + firstHalfMonths, 1) :
-    startMillis + Math.floor(periodDays / 2) * 86400000;
-  var firstHalfEndDay = Math.max(
-    1,
-    Math.min(periodDays - 1, Math.round((splitMillis - startMillis) / 86400000))
-  );
-
-  var shortMonths = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-  ];
-  var displayLabel = shortMonths[startMonth - 1] + ' ' + startYear +
-    ' – ' + shortMonths[endMonth - 1] + ' ' + endYear;
-  function twoDigit(value) {
-    return value < 10 ? '0' + value : String(value);
-  }
-  var fileLabel = startYear + '_' + twoDigit(startMonth) +
-    '_to_' + endYear + '_' + twoDigit(endMonth);
-
-  return {
-    startYear: startYear,
-    startMonth: startMonth,
-    endYear: endYear,
-    endMonth: endMonth,
-    startMillis: startMillis,
-    endExclusiveMillis: endExclusiveMillis,
-    start: ee.Date.fromYMD(startYear, startMonth, 1),
-    end: ee.Date.fromYMD(endYear, endMonth, 1).advance(1, 'month'),
-    periodDays: periodDays,
-    periodMonths: periodMonths,
-    firstHalfEndDay: firstHalfEndDay,
-    displayLabel: displayLabel,
-    fileLabel: fileLabel
-  };
-}
-
 dynamicsAnalysisPanel.add(ui.Panel([
-  ui.Label('Start:'),
-  dynamicsStartMonthSelect,
-  dynamicsStartYearBox
-], ui.Panel.Layout.flow('horizontal')));
-
-dynamicsAnalysisPanel.add(ui.Panel([
-  ui.Label('End (inclusive):'),
-  dynamicsEndMonthSelect,
-  dynamicsEndYearBox
-], ui.Panel.Layout.flow('horizontal')));
-
-dynamicsAnalysisPanel.add(ui.Panel([
+  ui.Label('Year:'),
+  dynamicsYearBox,
   ui.Label('Max gap within one episode:'),
   dynamicsMaxGapBox
 ], ui.Panel.Layout.flow('horizontal')));
-
-dynamicsAnalysisPanel.add(ui.Label({
-  value: 'Default hydrological year: November 2024 through October 2025. ' +
-    'The timing outputs use analysis day 1 = the first day of the selected period.',
-  style: {fontSize: '10px', color: '#555555', whiteSpace: 'normal'}
-}));
 
 dynamicsAnalysisPanel.add(ui.Label({
   value: 'Timing metrics',
@@ -3295,37 +2965,37 @@ dynamicsAnalysisPanel.add(ui.Label({
 }));
 
 var dynFirstWet = ui.Checkbox({
-  label: 'First observed selected-water day (analysis day)',
+  label: 'First observed selected-water day (DOY)',
   value: true
 });
 
 var dynLastWet = ui.Checkbox({
-  label: 'Last selected water-class day (analysis day)',
+  label: 'Last selected water-class day (DOY)',
   value: false
 });
 
 var dynFirstDryAfterWet = ui.Checkbox({
-  label: 'First dry day after final selected detection (analysis day)',
+  label: 'First dry day after final selected detection (DOY)',
   value: false
 });
 
 var dynFirstOpen = ui.Checkbox({
-  label: 'First observed open-water day (analysis day)',
+  label: 'First observed open-water day (DOY)',
   value: false
 });
 
 var dynLastOpen = ui.Checkbox({
-  label: 'Last observed open-water day (analysis day)',
+  label: 'Last observed open-water day (DOY)',
   value: false
 });
 
 var dynFirstPartial = ui.Checkbox({
-  label: 'First observed inundated/partial day (analysis day)',
+  label: 'First observed inundated/partial day (DOY)',
   value: false
 });
 
 var dynLastPartial = ui.Checkbox({
-  label: 'Last observed inundated/partial day (analysis day)',
+  label: 'Last observed inundated/partial day (DOY)',
   value: false
 });
 
@@ -3660,29 +3330,6 @@ dynamicsVisualizationPanel.add(ui.Label(
   'View products generated by the latest run, control legends, and inspect pixel time series.'
 ));
 
-var dynamicsFirstSelectedTimingVis = ui.Select({
-  items: [
-    DYN_TIMING_VIS_SPLIT,
-    DYN_TIMING_VIS_MULTIHUE,
-    DYN_TIMING_VIS_VIRIDIS
-  ],
-  value: DYN_TIMING_VIS_SPLIT,
-  style: {stretch: 'horizontal'},
-  onChange: function() {
-    dynRefreshFirstSelectedTimingPreview();
-  }
-});
-
-dynamicsVisualizationPanel.add(ui.Label({
-  value: 'First-observation timing colour scheme',
-  style: {fontWeight: 'bold', margin: '10px 0 2px 0'}
-}));
-dynamicsVisualizationPanel.add(dynamicsFirstSelectedTimingVis);
-dynamicsVisualizationPanel.add(ui.Label({
-  value: 'Recommended: two independent half-period ramps. For a 12-month hydrological year this gives one ramp to the first six months and a different ramp to the final six months. The multi-hue and original Viridis alternatives remain available for comparison.',
-  style: {fontSize: '10px', color: '#555555', whiteSpace: 'normal'}
-}));
-
 dynamicsVisualizationPanel.add(ui.Label({
   value: 'Generated-product visualization',
   style: {
@@ -3777,7 +3424,7 @@ dynamicsEnablePixelInspector = ui.Checkbox({
     if (enabled) {
       dynSetStatus(
         (lastDynamicsObservations === null && lastDynamicsLazyRunConfig === null) ?
-          'Pixel inspector enabled. Run the selected-period analysis, then click a pixel.' :
+          'Pixel inspector enabled. Run the annual analysis, then click a pixel.' :
           'Pixel inspector enabled. Click inside the analysis AOI. A small point-local daily graph is built for each click.'
       );
     } else {
@@ -3796,7 +3443,7 @@ dynamicsVisualizationPanel.add(ui.Label(
 ));
 
 var runDynamicsButton = ui.Button({
-  label: 'Run selected hydrological-period dynamics',
+  label: 'Run selected annual dynamics',
   style: {
     stretch: 'horizontal',
     margin: '10px 0 4px 0'
@@ -3841,13 +3488,13 @@ var dynamicsExportTarget = ui.Select({
 
 var dynamicsDriveFolder = ui.Textbox({
   placeholder: 'Google Drive folder',
-  value: 'GEE_hydrological_water_dynamics',
+  value: 'GEE_annual_water_dynamics',
   style: {stretch: 'horizontal'}
 });
 
 var dynamicsAssetCollection = ui.Textbox({
-  placeholder: 'users/your_user/hydrological_water_dynamics',
-  value: 'users/your_user/hydrological_water_dynamics',
+  placeholder: 'users/your_user/annual_water_dynamics',
+  value: 'users/your_user/annual_water_dynamics',
   style: {stretch: 'horizontal'}
 });
 
@@ -3892,7 +3539,7 @@ if (
   typeof tabSelect !== 'undefined' &&
   typeof tabPanel !== 'undefined'
 ) {
-  tabSelect.items().add('Hydrological-period water dynamics');
+  tabSelect.items().add('Annual water dynamics');
 
   tabSelect.onChange(function(tabName) {
     tabPanel.clear();
@@ -3909,7 +3556,7 @@ if (
       tabPanel.add(swotPanel);
     }
 
-    if (tabName === 'Hydrological-period water dynamics') {
+    if (tabName === 'Annual water dynamics') {
       tabPanel.add(dynamicsPanel);
     }
   });
@@ -3927,7 +3574,7 @@ if (
   });
 
   dynRootPanel.add(ui.Label({
-    value: 'Hydrological-period water and inundation dynamics',
+    value: 'Annual water and inundation dynamics',
     style: {
       fontWeight: 'bold',
       fontSize: '16px',
@@ -3960,13 +3607,13 @@ dynBuildInspectorPanel();
 Map.add(dynInspectorPanel);
 
 // One lightweight listener is always registered. It performs no work unless
-// the inspector checkbox is enabled and an hydrological-period run has been completed.
+// the inspector checkbox is enabled and an annual run has been completed.
 Map.onClick(function(coords) {
   dynInspectCoordinates(coords);
 });
 
 // ------------------------------------------------------
-// Hydrological-period dynamics collection construction
+// Annual-dynamics collection construction
 // ------------------------------------------------------
 
 function dynSourcePriority(sourceBit) {
@@ -4126,7 +3773,7 @@ function dynTagHlsPlatform(image) {
 function dynAddDateKey(image) {
   return image.set(
     'date_key',
-    ee.Date(image.get('system:time_start')).format('yyyy-MM-dd')
+    ee.Date(image.get('system:time_start')).format('YYYY-MM-dd')
   );
 }
 
@@ -4142,7 +3789,7 @@ function dynZeroDiagnosticImage(date, aoi) {
   return image
     .select(DYN_DIAGNOSTIC_BAND_ORDER)
     .set({
-      date_key: ee.Date(date).format('yyyy-MM-dd'),
+      date_key: ee.Date(date).format('YYYY-MM-dd'),
       'system:time_start': ee.Date(date).millis(),
       placeholder: 1,
       has_real_observation: 0
@@ -4388,7 +4035,7 @@ function dynTypedMaskedRawObservation(date, aoi) {
     .select(DYN_RAW_BAND_ORDER)
     .cast(DYN_RAW_BAND_TYPES, DYN_RAW_BAND_ORDER)
     .set({
-      date_key: ee.Date(date).format('yyyy-MM-dd'),
+      date_key: ee.Date(date).format('YYYY-MM-dd'),
       'system:time_start': ee.Date(date).millis(),
       source_code: 0,
       source_priority: 0,
@@ -4818,34 +4465,34 @@ products do not need the complete daily fusion graph. Under the recommended
 "Any selected water wins" rule, the temporal extreme can be calculated for
 each source independently and then reduced across the enabled sources.
 
-This path intentionally carries only one analysis-day band. Class-0 dry validity,
+This path intentionally carries only one DOY band. Class-0 dry validity,
 provenance, conflicts and raw diagnostics remain in their dedicated engines
 because they cannot change a first/last selected-water date.
 */
 
-function dynDirectMaskedAnalysisDay(name) {
+function dynDirectMaskedDoy(name) {
   return ee.Image.constant(0)
     .rename(name)
     .toInt16()
     .updateMask(ee.Image.constant(0));
 }
 
-function dynDirectImageAnalysisDay(image, condition, outputName, periodStart) {
+function dynDirectImageDoy(image, condition, outputName) {
   var date = ee.Date(image.get('system:time_start'));
-  var analysisDay = ee.Image.constant(
-    dynAnalysisDayNumber(date, periodStart)
+  var doy = ee.Image.constant(
+    date.getRelative('day', 'year').add(1)
   )
     .rename(outputName)
     .toInt16();
 
-  return analysisDay
+  return doy
     .updateMask(ee.Image(condition).unmask(0).eq(1))
     .copyProperties(image, ['system:time_start', 'system:index']);
 }
 
-function dynPrepareDirectSources(aoi, start, end) {
-  start = ee.Date(start);
-  end = ee.Date(end);
+function dynPrepareDirectSources(aoi, year) {
+  var start = ee.Date.fromYMD(year, 1, 1);
+  var end = start.advance(1, 'year');
 
   var dwSource = DYNAMICS_DW
     .filterBounds(aoi)
@@ -4990,23 +4637,21 @@ function dynDirectExtremeForSource(
   classGroup,
   reducerName,
   outputName,
-  classOptions,
-  periodStart
+  classOptions
 ) {
   if (!enabled) {
-    return dynDirectMaskedAnalysisDay(outputName);
+    return dynDirectMaskedDoy(outputName);
   }
 
   var candidates = ee.ImageCollection(source.map(function(image) {
-    return dynDirectImageAnalysisDay(
+    return dynDirectImageDoy(
       image,
       dynDirectCondition(image, sourceKind, classGroup, classOptions),
-      outputName,
-      periodStart
+      outputName
     );
   }));
 
-  var placeholder = dynDirectMaskedAnalysisDay(outputName)
+  var placeholder = dynDirectMaskedDoy(outputName)
     .set('system:time_start', ee.Date('1900-01-01').millis());
   var safe = ee.ImageCollection([placeholder]).merge(candidates);
 
@@ -5041,8 +4686,7 @@ function dynDirectFusedExtreme(
       classGroup,
       reducerName,
       outputName,
-      classOptions,
-      sources.start
+      classOptions
     ),
     dynDirectExtremeForSource(
       sources.hlsLandsat,
@@ -5051,8 +4695,7 @@ function dynDirectFusedExtreme(
       classGroup,
       reducerName,
       outputName,
-      classOptions,
-      sources.start
+      classOptions
     ),
     dynDirectExtremeForSource(
       hlsS2,
@@ -5061,8 +4704,7 @@ function dynDirectFusedExtreme(
       classGroup,
       reducerName,
       outputName,
-      classOptions,
-      sources.start
+      classOptions
     ),
     dynDirectExtremeForSource(
       sources.s1,
@@ -5071,8 +4713,7 @@ function dynDirectFusedExtreme(
       classGroup,
       reducerName,
       outputName,
-      classOptions,
-      sources.start
+      classOptions
     )
   ];
 
@@ -5107,22 +4748,22 @@ function dynBuildDirectTimingImages(
 
   return {
     firstSelected: build(
-      'selected', 'min', 'first_selected_class_analysis_day', needs.firstSelected
+      'selected', 'min', 'first_selected_class_doy', needs.firstSelected
     ),
     lastSelected: build(
-      'selected', 'max', 'last_selected_class_analysis_day', needs.lastSelected
+      'selected', 'max', 'last_selected_class_doy', needs.lastSelected
     ),
     firstOpen: build(
-      'open', 'min', 'first_open_water_analysis_day', needs.firstOpen
+      'open', 'min', 'first_open_water_doy', needs.firstOpen
     ),
     lastOpen: build(
-      'open', 'max', 'last_open_water_analysis_day', needs.lastOpen
+      'open', 'max', 'last_open_water_doy', needs.lastOpen
     ),
     firstPartial: build(
-      'partial', 'min', 'first_inundated_partial_analysis_day', needs.firstPartial
+      'partial', 'min', 'first_inundated_partial_doy', needs.firstPartial
     ),
     lastPartial: build(
-      'partial', 'max', 'last_inundated_partial_analysis_day', needs.lastPartial
+      'partial', 'max', 'last_inundated_partial_doy', needs.lastPartial
     )
   };
 }
@@ -5326,7 +4967,7 @@ function dynBuildDirectFirstDryAfterLastSelected(
     .toByte()
     .updateMask(ee.Image.constant(0))
     .set({
-      date_key: sources.start.format('yyyy-MM-dd'),
+      date_key: sources.start.format('YYYY-MM-dd'),
       'system:time_start': sources.start.millis(),
       placeholder: 1
     });
@@ -5379,17 +5020,17 @@ function dynBuildDirectFirstDryAfterLastSelected(
 
     var fusedDry = dryAny.and(unselectedAny.not());
     var date = ee.Date(representative.get('system:time_start'));
-    var analysisDay = ee.Image.constant(
-      dynAnalysisDayNumber(date, sources.start)
+    var doy = ee.Image.constant(
+      date.getRelative('day', 'year').add(1)
     )
-      .rename('first_dry_candidate_analysis_day')
+      .rename('first_dry_candidate_doy')
       .toInt16();
 
-    // analysisDay.gt(lastSelected) also propagates the mask of lastSelected.
-    // Pixels without any selected-water detection therefore remain masked.
-    return analysisDay
+    // doy.gt(lastSelected) also propagates the mask of lastSelected. Pixels
+    // without any selected-water detection therefore remain masked.
+    return doy
       .updateMask(fusedDry.eq(1))
-      .updateMask(analysisDay.gt(lastSelected))
+      .updateMask(doy.gt(lastSelected))
       .set({
         date_key: representative.get('date_key'),
         'system:time_start': representative.get('system:time_start')
@@ -5398,7 +5039,7 @@ function dynBuildDirectFirstDryAfterLastSelected(
 
   return candidates
     .reduce(ee.Reducer.min(), DYN_REDUCE_PARALLEL_SCALE)
-    .rename('first_dry_after_final_selected_analysis_day')
+    .rename('first_dry_after_final_selected_doy')
     .toInt16();
 }
 
@@ -5415,7 +5056,7 @@ conflicts, raw diagnostic bands or the complete fused state schema.
 Under "Any selected water wins", this engine carries only:
   selected = at least one enabled source reports a selected water class;
   valid    = at least one enabled source provides usable water/non-water state;
-  analysis_day = ordinal UTC date within the selected analysis period (day 1 = period start).
+  doy      = UTC acquisition date expressed as day of year.
 
 The HLS Sentinel-2 same-day Dynamic World gap-fill policy is applied before
 normalization, exactly as in the direct timing engine.
@@ -5606,7 +5247,7 @@ function dynBuildDirectSelectedValidCollection(
     .toByte()
     .updateMask(ee.Image.constant(0))
     .set({
-      date_key: sources.start.format('yyyy-MM-dd'),
+      date_key: sources.start.format('YYYY-MM-dd'),
       'system:time_start': sources.start.millis(),
       placeholder: 1
     });
@@ -5659,21 +5300,21 @@ function dynBuildDirectSelectedValidCollection(
       .toByte();
 
     var date = ee.Date(representative.get('system:time_start'));
-    var analysisDay = ee.Image.constant(
-      dynAnalysisDayNumber(date, sources.start)
+    var doy = ee.Image.constant(
+      date.getRelative('day', 'year').add(1)
     )
-      .rename('analysis_day')
+      .rename('doy')
       .toInt16()
       .updateMask(validAny.eq(1));
 
     return selectedAny
       .addBands(validAny)
-      .addBands(analysisDay)
+      .addBands(doy)
       .updateMask(validAny.eq(1))
-      .select(['selected', 'valid', 'analysis_day'])
+      .select(['selected', 'valid', 'doy'])
       .cast(
-        {selected: 'uint8', valid: 'uint8', analysis_day: 'int16'},
-        ['selected', 'valid', 'analysis_day']
+        {selected: 'uint8', valid: 'uint8', doy: 'int16'},
+        ['selected', 'valid', 'doy']
       )
       .set({
         date_key: representative.get('date_key'),
@@ -5686,9 +5327,9 @@ function dynBuildDirectSelectedValidCollection(
     .sort('system:time_start');
 }
 
-function buildAnnualDynamicsCollection(aoi, start, end, sourceOptions, classOptions) {
-  start = ee.Date(start);
-  end = ee.Date(end);
+function buildAnnualDynamicsCollection(aoi, year, sourceOptions, classOptions) {
+  var start = ee.Date.fromYMD(year, 1, 1);
+  var end = start.advance(1, 'year');
 
   var dwSource = DYNAMICS_DW
     .filterBounds(aoi)
@@ -5789,15 +5430,15 @@ function buildAnnualDynamicsCollection(aoi, start, end, sourceOptions, classOpti
       dynBuildDailyMetricPriority(candidates) :
       dynBuildDailyMetricUnion(candidates);
     var date = ee.Date(representative.get('system:time_start'));
-    var analysisDay = observation.select('valid')
+    var doy = observation.select('valid')
       .multiply(0)
-      .add(dynAnalysisDayNumber(date, start))
-      .rename('analysis_day')
+      .add(date.getRelative('day', 'year').add(1))
+      .rename('doy')
       .toInt16()
       .updateMask(observation.select('valid'));
 
     return observation
-      .addBands(analysisDay)
+      .addBands(doy)
       .select(DYN_METRIC_BAND_ORDER)
       .cast(DYN_METRIC_BAND_TYPES, DYN_METRIC_BAND_ORDER)
       .set({
@@ -5822,15 +5463,15 @@ function buildAnnualDynamicsCollection(aoi, start, end, sourceOptions, classOpti
       dynBuildDailyPriorityLight(candidates, aoi) :
       dynBuildDailyUnionLight(candidates, aoi);
     var date = ee.Date(representative.get('system:time_start'));
-    var analysisDay = observation.select('valid')
+    var doy = observation.select('valid')
       .multiply(0)
-      .add(dynAnalysisDayNumber(date, start))
-      .rename('analysis_day')
+      .add(date.getRelative('day', 'year').add(1))
+      .rename('doy')
       .toInt16()
       .updateMask(observation.select('valid'));
 
     return observation
-      .addBands(analysisDay)
+      .addBands(doy)
       .select(DYN_DAILY_BAND_ORDER)
       .cast(DYN_DAILY_BAND_TYPES, DYN_DAILY_BAND_ORDER)
       .set({
@@ -5892,7 +5533,7 @@ function buildAnnualDynamicsCollection(aoi, start, end, sourceOptions, classOpti
 }
 
 // ------------------------------------------------------
-// Hydrological-period dynamics metric helpers
+// Annual-dynamics metric helpers
 // ------------------------------------------------------
 
 function dynMaskedConstant(name) {
@@ -5901,14 +5542,14 @@ function dynMaskedConstant(name) {
     .updateMask(ee.Image(0));
 }
 
-function dynConditionAnalysisDaySingle(
+function dynConditionDoySingle(
   collection,
   conditionBand,
   reducerName,
   outputName
 ) {
   var candidates = ee.ImageCollection(collection.map(function(image) {
-    return image.select('analysis_day')
+    return image.select('doy')
       .updateMask(image.select(conditionBand).eq(1));
   }));
 
@@ -5925,21 +5566,21 @@ function dynConditionAnalysisDaySingle(
     .toInt16();
 }
 
-function dynConditionAnalysisDayMinMax(
+function dynConditionDoyMinMax(
   collection,
   conditionBand,
   firstOutputName,
   lastOutputName
 ) {
-  // Build one conditional analysis-day collection and obtain the minimum and maximum
+  // Build one conditional DOY collection and obtain the minimum and maximum
   // in one traversal. Earlier versions calculated first and last dates with
   // two independent collection reductions. A span layer then had to evaluate
   // both full reductions in the same map-tile request, which could exceed the
   // interactive memory limit after the source graph became more complex.
   var candidates = collection.map(function(image) {
-    return image.select('analysis_day')
+    return image.select('doy')
       .updateMask(image.select(conditionBand).eq(1))
-      .rename('condition_analysis_day')
+      .rename('condition_doy')
       .toInt16();
   });
 
@@ -5947,10 +5588,10 @@ function dynConditionAnalysisDayMinMax(
     .reduce(ee.Reducer.minMax(), DYN_REDUCE_PARALLEL_SCALE);
 
   return {
-    first: minMax.select('condition_analysis_day_min')
+    first: minMax.select('condition_doy_min')
       .rename(firstOutputName)
       .toInt16(),
-    last: minMax.select('condition_analysis_day_max')
+    last: minMax.select('condition_doy_max')
       .rename(lastOutputName)
       .toInt16()
   };
@@ -5958,14 +5599,14 @@ function dynConditionAnalysisDayMinMax(
 
 function dynFirstDryAfterLastWet(collection, lastWet) {
   return collection.map(function(image) {
-    var analysisDay = image.select('analysis_day');
+    var doy = image.select('doy');
     var candidate = image.select('dry').eq(1)
-      .and(analysisDay.gt(lastWet));
+      .and(doy.gt(lastWet));
 
-    return analysisDay.updateMask(candidate);
+    return doy.updateMask(candidate);
   })
   .reduce(ee.Reducer.min(), DYN_REDUCE_PARALLEL_SCALE)
-  .rename('first_dry_after_final_selected_analysis_day')
+  .rename('first_dry_after_final_selected_doy')
   .toInt16();
 }
 
@@ -6041,9 +5682,9 @@ function dynWetFractionFromCounts(selectedCount, validCount) {
     .toFloat();
 }
 
-function dynSourceAtAnalysisDay(collection, targetAnalysisDay, outputName) {
+function dynSourceAtDoy(collection, targetDoy, outputName) {
   return collection.map(function(image) {
-    var onTargetDate = image.select('analysis_day').eq(targetAnalysisDay);
+    var onTargetDate = image.select('doy').eq(targetDoy);
 
     return image.select('selected_source_mask')
       .updateMask(image.select('selected').eq(1).and(onTargetDate));
@@ -6064,10 +5705,10 @@ function dynSequenceMetrics(collection, maxGapDays) {
     .multiply(0)
     .toInt16();
 
-  var initial = template.rename('previous_analysis_day')
+  var initial = template.rename('previous_doy')
     .addBands(template.rename('previous_selected'))
     .addBands(template.rename('has_previous'))
-    .addBands(template.rename('run_start_analysis_day'))
+    .addBands(template.rename('run_start_doy'))
     .addBands(template.rename('selected_episode_count'))
     .addBands(template.rename('longest_selected_spell_days'))
     .addBands(template.rename('maximum_valid_gap_days'));
@@ -6078,14 +5719,14 @@ function dynSequenceMetrics(collection, maxGapDays) {
 
     var valid = image.select('valid').eq(1).unmask(0);
     var selected = image.select('selected').eq(1).unmask(0);
-    var analysisDay = image.select('analysis_day').unmask(0).toInt16();
+    var doy = image.select('doy').unmask(0).toInt16();
 
-    var previousAnalysisDay = acc.select('previous_analysis_day');
+    var previousDoy = acc.select('previous_doy');
     var previousSelected = acc.select('previous_selected');
     var hasPrevious = acc.select('has_previous');
-    var previousRunStart = acc.select('run_start_analysis_day');
+    var previousRunStart = acc.select('run_start_doy');
 
-    var gap = analysisDay.subtract(previousAnalysisDay);
+    var gap = doy.subtract(previousDoy);
     var hasComparablePrevious = valid.and(hasPrevious.eq(1));
     var continuous = hasComparablePrevious
       .and(previousSelected.eq(1))
@@ -6096,9 +5737,9 @@ function dynSequenceMetrics(collection, maxGapDays) {
 
     var runStart = previousRunStart;
     runStart = runStart.where(valid.and(selected.not()), 0);
-    runStart = runStart.where(startsEpisode, analysisDay);
+    runStart = runStart.where(startsEpisode, doy);
 
-    var currentRunDays = analysisDay
+    var currentRunDays = doy
       .subtract(runStart)
       .add(1)
       .where(selectedValid.not(), 0);
@@ -6112,18 +5753,18 @@ function dynSequenceMetrics(collection, maxGapDays) {
     var maximumGap = acc.select('maximum_valid_gap_days')
       .max(gap.where(hasComparablePrevious.not(), 0));
 
-    var nextPreviousAnalysisDay = previousAnalysisDay.where(valid, analysisDay);
+    var nextPreviousDoy = previousDoy.where(valid, doy);
     var nextPreviousSelected = previousSelected.where(
       valid,
       selected.toInt16()
     );
     var nextHasPrevious = hasPrevious.where(valid, 1);
 
-    return nextPreviousAnalysisDay
-      .rename('previous_analysis_day')
+    return nextPreviousDoy
+      .rename('previous_doy')
       .addBands(nextPreviousSelected.rename('previous_selected'))
       .addBands(nextHasPrevious.rename('has_previous'))
-      .addBands(runStart.rename('run_start_analysis_day'))
+      .addBands(runStart.rename('run_start_doy'))
       .addBands(episodes.rename('selected_episode_count'))
       .addBands(longest.rename('longest_selected_spell_days'))
       .addBands(maximumGap.rename('maximum_valid_gap_days'))
@@ -6155,7 +5796,7 @@ function dynAppendBand(stack, image) {
 }
 
 // ------------------------------------------------------
-// Run and export selected-period dynamics
+// Run and export annual dynamics
 // ------------------------------------------------------
 
 
@@ -6172,17 +5813,13 @@ function runAnnualDynamics() {
     return;
   }
 
-  var period = dynReadPeriodConfig();
+  var year = Number(dynamicsYearBox.getValue());
 
-  if (period.error) {
-    dynSetStatus(period.error);
+  if (!year || year < 2015 || year > 2100) {
+    dynSetStatus('Enter a valid year, 2015 or later.');
     return;
   }
 
-  var start = period.start;
-  var end = period.end;
-  var periodDays = period.periodDays;
-  var periodLabel = period.displayLabel;
   var useHlsMaster = dynamicsUseHls.getValue();
 
   var sourceOptions = {
@@ -6406,7 +6043,6 @@ function runAnnualDynamics() {
   dynInspectorCoordinates = null;
   lastDynamicsObservations = null;
   lastDynamicsYear = null;
-  lastDynamicsPeriodFileLabel = null;
   lastDynamicsRawHls = null;
   lastDynamicsRawDw = null;
   lastDynamicsSourceOptions = null;
@@ -6463,7 +6099,7 @@ function runAnnualDynamics() {
     dynPartialSpan.getValue() || dynOpenToPartialLag.getValue();
   var needLastPartial = dynLastPartial.getValue() || dynPartialSpan.getValue();
 
-  var directSources = dynPrepareDirectSources(aoi, start, end);
+  var directSources = dynPrepareDirectSources(aoi, year);
   var directTiming = useDirectTiming ? dynBuildDirectTimingImages(
     directSources,
     sourceOptions,
@@ -6521,8 +6157,7 @@ function runAnnualDynamics() {
 
   var annual = needDailyEngine ? buildAnnualDynamicsCollection(
     aoi,
-    start,
-    end,
+    year,
     sourceOptions,
     classOptions
   ) : null;
@@ -6538,33 +6173,33 @@ function runAnnualDynamics() {
   ) : null;
 
   var firstSelected = needFirstSelected ? (
-    useDirectTiming ? directTiming.firstSelected : dynConditionAnalysisDaySingle(
-      observations, 'selected', 'min', 'first_selected_class_analysis_day'
+    useDirectTiming ? directTiming.firstSelected : dynConditionDoySingle(
+      observations, 'selected', 'min', 'first_selected_class_doy'
     )
   ) : null;
   var lastSelected = needLastSelected ? (
-    useDirectTiming ? directTiming.lastSelected : dynConditionAnalysisDaySingle(
-      observations, 'selected', 'max', 'last_selected_class_analysis_day'
+    useDirectTiming ? directTiming.lastSelected : dynConditionDoySingle(
+      observations, 'selected', 'max', 'last_selected_class_doy'
     )
   ) : null;
   var firstOpen = needFirstOpen ? (
-    useDirectTiming ? directTiming.firstOpen : dynConditionAnalysisDaySingle(
-      observations, 'open', 'min', 'first_open_water_analysis_day'
+    useDirectTiming ? directTiming.firstOpen : dynConditionDoySingle(
+      observations, 'open', 'min', 'first_open_water_doy'
     )
   ) : null;
   var lastOpen = needLastOpen ? (
-    useDirectTiming ? directTiming.lastOpen : dynConditionAnalysisDaySingle(
-      observations, 'open', 'max', 'last_open_water_analysis_day'
+    useDirectTiming ? directTiming.lastOpen : dynConditionDoySingle(
+      observations, 'open', 'max', 'last_open_water_doy'
     )
   ) : null;
   var firstPartial = needFirstPartial ? (
-    useDirectTiming ? directTiming.firstPartial : dynConditionAnalysisDaySingle(
-      observations, 'partial', 'min', 'first_inundated_partial_analysis_day'
+    useDirectTiming ? directTiming.firstPartial : dynConditionDoySingle(
+      observations, 'partial', 'min', 'first_inundated_partial_doy'
     )
   ) : null;
   var lastPartial = needLastPartial ? (
-    useDirectTiming ? directTiming.lastPartial : dynConditionAnalysisDaySingle(
-      observations, 'partial', 'max', 'last_inundated_partial_analysis_day'
+    useDirectTiming ? directTiming.lastPartial : dynConditionDoySingle(
+      observations, 'partial', 'max', 'last_inundated_partial_doy'
     )
   ) : null;
 
@@ -6608,92 +6243,77 @@ function runAnnualDynamics() {
       image: clipped,
       vis: vis,
       type: legendType,
-      periodStartMillis: period.startMillis,
-      periodEndExclusiveMillis: period.endExclusiveMillis,
-      periodDays: period.periodDays,
-      periodMonths: period.periodMonths,
-      firstHalfEndDay: period.firstHalfEndDay,
-      periodLabel: period.displayLabel
+      year: year
     };
 
     previewEntries.push(entry);
     legendEntries.push(entry);
 
+
     stack = dynAppendBand(stack, clipped);
     bandNames.push(clipped.bandNames().get(0));
-    return entry;
   }
 
-  var timingViridisVis = dynTimingContinuousVis(
-    periodDays,
-    DYN_ANALYSIS_DAY_VIS.palette
-  );
-
   if (dynFirstWet.getValue()) {
-    var firstSelectedEntry = addSelected(
+    addSelected(
       firstSelected,
-      timingViridisVis,
-      'First observed selected-water day (analysis day)',
-      'ANALYSIS_DAY'
-    );
-    firstSelectedEntry.isFirstSelectedTiming = true;
-    dynConfigureFirstSelectedTimingPreview(
-      firstSelectedEntry,
-      dynamicsFirstSelectedTimingVis.getValue()
+      DYN_DOY_VIS,
+      'First observed selected-water day (DOY)',
+      'DOY'
     );
   }
 
   if (dynLastWet.getValue()) {
     addSelected(
       lastSelected,
-      timingViridisVis,
-      'Last selected water-class day (analysis day)',
-      'ANALYSIS_DAY'
+      DYN_DOY_VIS,
+      'Last selected water-class day (DOY)',
+      'DOY'
     );
   }
 
   if (dynFirstDryAfterWet.getValue()) {
     addSelected(
       firstDryAfterSelected,
-      timingViridisVis,
-      'First dry day after final selected detection (analysis day)',
-      'ANALYSIS_DAY'
+      DYN_DOY_VIS,
+      'First dry day after final selected detection (DOY)',
+      'DOY'
     );
   }
 
   if (dynFirstOpen.getValue()) {
     addSelected(
       firstOpen,
-      timingViridisVis,
-      'First observed open-water day (analysis day)',
-      'ANALYSIS_DAY'
+      DYN_DOY_VIS,
+      'First observed open-water day (DOY)',
+      'DOY'
     );
   }
 
   if (dynLastOpen.getValue()) {
     addSelected(
       lastOpen,
-      timingViridisVis,
-      'Last observed open-water day (analysis day)',
-      'ANALYSIS_DAY'
+      DYN_DOY_VIS,
+      'Last observed open-water day (DOY)',
+      'DOY'
     );
   }
 
   if (dynFirstPartial.getValue()) {
     addSelected(
       firstPartial,
-      timingViridisVis,
-      'First observed inundated/partial day (analysis day)',
-      'ANALYSIS_DAY'
+      DYN_DOY_VIS,
+      'First observed inundated/partial day (DOY)',
+      'DOY'
     );
   }
 
   if (dynLastPartial.getValue()) {
     addSelected(
       lastPartial,
-      timingViridisVis,
-      'Last observed inundated/partial day (analysis day)',
-      'ANALYSIS_DAY'
+      DYN_DOY_VIS,
+      'Last observed inundated/partial day (DOY)',
+      'DOY'
     );
   }
 
@@ -7083,7 +6703,7 @@ function runAnnualDynamics() {
 
   if (dynFirstWetSource.getValue()) {
     addSelected(
-      dynSourceAtAnalysisDay(
+      dynSourceAtDoy(
         observations,
         firstSelected,
         'first_selected_source'
@@ -7096,7 +6716,7 @@ function runAnnualDynamics() {
 
   if (dynLastWetSource.getValue()) {
     addSelected(
-      dynSourceAtAnalysisDay(
+      dynSourceAtDoy(
         observations,
         lastSelected,
         'last_selected_source'
@@ -7168,14 +6788,7 @@ function runAnnualDynamics() {
     .toFloat()
     .clip(aoi)
     .set({
-      analysis_period: period.displayLabel,
-      analysis_start_date: start.format('yyyy-MM-dd'),
-      analysis_end_date: end.advance(-1, 'day').format('yyyy-MM-dd'),
-      analysis_period_days: periodDays,
-      analysis_period_months: period.periodMonths,
-      timing_value_definition: 'Ordinal day within selected analysis period; day 1 = analysis_start_date',
-      calendar_doy_wrap_avoided: true,
-      first_selected_timing_visualization: dynamicsFirstSelectedTimingVis.getValue(),
+      analysis_year: year,
       selected_water_classes: selectedClassSummary,
       same_day_fusion: sourceOptions.sameDayFusion,
       hls_sentinel2_gap_fill_only: sourceOptions.hlsMsiGapFill,
@@ -7220,18 +6833,14 @@ function runAnnualDynamics() {
       hls_mask_diagnostics: '252=snow/ice,253=cloud/shadow,254=ocean'
     });
 
-  lastDynamicsName = 'hydrological_selected_water_dynamics_' + period.fileLabel;
+  lastDynamicsName = 'annual_selected_water_dynamics_' + year;
   lastDynamicsBands = bandNames;
   lastDynamicsAoi = aoi;
-  lastDynamicsYear = periodLabel;
-  lastDynamicsPeriodFileLabel = period.fileLabel;
+  lastDynamicsYear = year;
   lastDynamicsSourceOptions = sourceOptions;
   lastDynamicsLazyRunConfig = {
     aoi: aoi,
-    start: start,
-    end: end,
-    periodLabel: periodLabel,
-    periodDays: periodDays,
+    year: year,
     sourceOptions: sourceOptions,
     classOptions: classOptions
   };
@@ -7244,7 +6853,7 @@ function runAnnualDynamics() {
 
   dynSetBusy(
     false,
-    'Stage 3/3: metric-specific preview queued for ' + periodLabel + '. The ' +
+    'Stage 3/3: metric-specific preview queued for ' + year + '. The ' +
     (useDirectTiming ?
       'direct per-source timing engine was used for timing products. ' :
       'priority-fusion daily engine was used because priority fusion was selected. ') +
@@ -7258,7 +6867,7 @@ function runAnnualDynamics() {
 function exportAnnualDynamics() {
   if (lastDynamicsImage === null) {
     dynSetStatus(
-      'No dynamics image is available. Run the hydrological-period dynamics first.'
+      'No annual dynamics image is available. Run the annual dynamics first.'
     );
     return;
   }

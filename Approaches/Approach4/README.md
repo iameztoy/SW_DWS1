@@ -15,8 +15,14 @@ The current synchronized pair is v1.5.0:
   inspector for verifying the successive fusion stages and supporting masks.
 
 `scripts/DW_water_retrieval_annual_dynamics_tabs_v6_9.txt` is a related but
-purpose-specific annual observation-dynamics application. It remains separate
-from the synchronized production/inspector version sequence.
+purpose-specific hydrological-period observation-dynamics application. Its
+analysis window is defined by inclusive start and end calendar months (up to
+12 months), allowing cross-calendar hydrological years. Timing outputs use
+ordinal analysis days from the selected period start, avoiding calendar-DOY
+wrap. The first-selected timing preview offers split-half, enhanced multi-hue,
+and original Viridis palettes. It remains separate from the synchronized
+production/inspector version sequence. The preceding annual-only repository
+copy is retained under `scripts/legacy/`.
 
 The imported contexts are preserved under `docs/`. See
 `docs/alignment_v1_5_0.md` for the comparison, alignment decisions, and
